@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_SETTINGS, normalizeSettings } from './settings';
+import { DEFAULT_POPUP_UI_STATE, DEFAULT_SETTINGS, normalizePopupUiState, normalizeSettings } from './settings';
 
 describe('normalizeSettings', () => {
   it('returns defaults for missing values', () => {
@@ -23,5 +23,21 @@ describe('normalizeSettings', () => {
       translatedTextColor: '#123456',
       translatedFontFamily: 'serif'
     });
+  });
+});
+
+describe('normalizePopupUiState', () => {
+  it('returns defaults for missing values', () => {
+    expect(normalizePopupUiState(undefined)).toEqual(DEFAULT_POPUP_UI_STATE);
+  });
+
+  it('keeps the supported remembered page mode', () => {
+    expect(normalizePopupUiState({ lastPageMode: 'bilingual' })).toEqual({
+      lastPageMode: 'bilingual'
+    });
+  });
+
+  it('falls back for unsupported values', () => {
+    expect(normalizePopupUiState({ lastPageMode: 'unsupported' })).toEqual(DEFAULT_POPUP_UI_STATE);
   });
 });

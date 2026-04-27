@@ -7,6 +7,7 @@ import {
 } from '@translate-helper/shared-protocol';
 
 import type { BridgeSettings } from './messages';
+import { resolveBridgeRequestTimeoutMs } from './translation-planning';
 
 const HEALTH_TIMEOUT_MS = 2500;
 const TRANSLATE_TIMEOUT_MS = 45000;
@@ -186,6 +187,7 @@ export async function translateWithBridge(
   }
 
   const endpoint = validatedRequest.mode === 'selection' ? '/translate/selection' : '/translate/page';
+  const timeoutMs = resolveBridgeRequestTimeoutMs(validatedRequest, TRANSLATE_TIMEOUT_MS);
   const startedAt = Date.now();
   try {
     logBridge('info', 'translation request start', {
@@ -193,7 +195,7 @@ export async function translateWithBridge(
       mode: validatedRequest.mode,
       endpoint,
       bridgeUrl: settings.bridgeUrl,
-      timeoutMs: TRANSLATE_TIMEOUT_MS,
+      timeoutMs,
       segmentCount: validatedRequest.segments.length,
       charCount: validatedRequest.segments.reduce((sum, segment) => sum + segment.text.length, 0)
     });
@@ -204,7 +206,7 @@ export async function translateWithBridge(
         'X-Request-Id': validatedRequest.requestId
       },
       body: JSON.stringify(validatedRequest),
-      signal: withTimeout(TRANSLATE_TIMEOUT_MS)
+      signal: withTimeout(timeoutMs)
     });
     logBridge('info', 'translation request response', {
       requestId: validatedRequest.requestId,
@@ -239,6 +241,18 @@ export async function translateWithBridge(
       return { ok: false, error: createError('invalid_response', 'Bridge returned invalid JSON.', true) };
     }
 
+    const parsedError = isRecord(payload.error) ? normalizeErrorPayload(payload.error) : undefined;
+    if (parsedError) {
+      logBridge('warn', 'translation response carried error payload', {
+        requestId: validatedRequest.requestId,
+        endpoint,
+        durationMs: Date.now() - startedAt,
+        errorCode: parsedError.code,
+        errorMessage: parsedError.message
+      });
+      return { ok: false, error: parsedError };
+    }
+
     const translations = Array.isArray(payload.translations)
       ? payload.translations
           .filter((item): item is { id: string; text: string } => isRecord(item) && typeof item.id === 'string' && typeof item.text === 'string')
@@ -267,22 +281,6 @@ export async function translateWithBridge(
       warnings: Array.isArray(payload.warnings) ? payload.warnings.filter((warning): warning is string => typeof warning === 'string') : []
     };
 
-    const parsedError = isRecord(payload.error) ? normalizeErrorPayload(payload.error) : undefined;
-    if (parsedError) {
-      translatedResponse.error = parsedError;
-    }
-
-    if (translatedResponse.error) {
-      logBridge('warn', 'translation response carried error payload', {
-        requestId: validatedRequest.requestId,
-        endpoint,
-        durationMs: Date.now() - startedAt,
-        errorCode: translatedResponse.error.code,
-        errorMessage: translatedResponse.error.message
-      });
-      return { ok: false, error: translatedResponse.error };
-    }
-
     logBridge('info', 'translation request success', {
       requestId: translatedResponse.requestId,
       endpoint,
@@ -297,7 +295,7 @@ export async function translateWithBridge(
       logBridge('warn', 'translation request timeout', {
         requestId: validatedRequest.requestId,
         endpoint,
-        timeoutMs: TRANSLATE_TIMEOUT_MS,
+        timeoutMs,
         durationMs: Date.now() - startedAt
       });
       return { ok: false, error: createError('timeout', 'Bridge request timed out. Try again after VS Code finishes the translation.', true) };

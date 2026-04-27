@@ -78,6 +78,13 @@
         gap: 10px;
       }
 
+      .quick-action {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
       button,
       a.button-link {
         appearance: none;
@@ -94,6 +101,10 @@
       button.primary {
         background: #2f5e78;
         color: #fff;
+      }
+
+      button.wide {
+        width: 100%;
       }
 
       button.secondary,
@@ -135,11 +146,15 @@
 
       <section class="card">
         <h2 style="font-size: 13px; margin-bottom: 10px;">Whole Page</h2>
+        <div class="quick-action">
+          <button id="translate-last-mode" class="primary wide">Translate page now</button>
+          <p id="quick-mode-hint" class="subtle">Uses your remembered page mode.</p>
+        </div>
         <div class="controls">
-          <button id="translate-translated-only" class="primary">Translated only</button>
+          <button id="translate-translated-only" class="secondary">Translated only</button>
           <button id="translate-bilingual" class="secondary">Bilingual</button>
-          <button id="revert-page" class="ghost">Revert page</button>
           <button id="translate-selection" class="ghost">Translate selection</button>
+          <button id="revert-page" class="ghost">Revert page</button>
         </div>
       </section>
 

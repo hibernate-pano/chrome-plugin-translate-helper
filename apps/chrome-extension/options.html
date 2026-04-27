@@ -76,6 +76,7 @@
       .actions {
         display: flex;
         align-items: center;
+        flex-wrap: wrap;
         gap: 12px;
         margin-top: 22px;
       }
@@ -91,9 +92,36 @@
         cursor: pointer;
       }
 
+      button.secondary {
+        background: #e7dac5;
+        color: #3d3227;
+      }
+
       #save-status {
         color: #5b4e3d;
         font-size: 14px;
+      }
+
+      .inline-actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      .inline-actions button {
+        padding: 9px 12px;
+      }
+
+      .status {
+        min-height: 20px;
+        font-size: 13px;
+      }
+
+      .status[data-tone="success"] {
+        color: #1f6a40;
+      }
+
+      .status[data-tone="error"] {
+        color: #8a2d2d;
       }
 
       .preview {
@@ -127,6 +155,9 @@
           <label>
             Pairing token
             <input id="pairing-token" name="pairingToken" type="password" placeholder="Paste token from VS Code bridge" />
+            <div class="inline-actions">
+              <button id="toggle-token-visibility" type="button" class="secondary">Show token</button>
+            </div>
           </label>
           <label>
             Target language
@@ -149,8 +180,10 @@
 
         <div class="actions">
           <button type="submit">Save settings</button>
+          <button id="test-bridge" type="button" class="secondary">Test bridge</button>
           <span id="save-status">No unsaved changes.</span>
         </div>
+        <div id="bridge-check-status" class="status" data-tone="neutral"></div>
 
         <div class="preview">
           <div class="preview-label">Translated text preview</div>

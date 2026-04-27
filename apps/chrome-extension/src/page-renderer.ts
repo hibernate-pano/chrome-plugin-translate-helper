@@ -11,7 +11,7 @@ const APPLIED_ATTR = 'data-translate-helper-applied';
 interface BlockSnapshot {
   element: HTMLElement;
   originalHtml: string;
-  insertedNode?: HTMLElement;
+  insertedNode?: HTMLElement | undefined;
 }
 
 const snapshots = new Map<string, BlockSnapshot>();
@@ -64,23 +64,31 @@ function applyStyleVariables(style: TranslatedTextStyle): void {
 
 export function revertPageTranslation(): void {
   for (const [segmentId, snapshot] of snapshots) {
-    snapshot.element.innerHTML = snapshot.originalHtml;
-    snapshot.element.classList.remove(TRANSLATED_CLASS);
-    snapshot.element.removeAttribute(APPLIED_ATTR);
-    snapshot.insertedNode?.remove();
+    restoreBlock(snapshot);
     snapshots.delete(segmentId);
   }
+}
+
+function restoreBlock(snapshot: BlockSnapshot): void {
+  snapshot.element.innerHTML = snapshot.originalHtml;
+  snapshot.element.classList.remove(TRANSLATED_CLASS);
+  snapshot.element.removeAttribute(APPLIED_ATTR);
+  snapshot.insertedNode?.remove();
+  snapshot.insertedNode = undefined;
 }
 
 export function applyPageTranslation(
   blocks: PageBlock[],
   response: TranslationResponse,
   displayMode: DisplayMode,
-  style: TranslatedTextStyle
+  style: TranslatedTextStyle,
+  options: { reset?: boolean } = {}
 ): { appliedCount: number; missingCount: number } {
   ensureStyles();
   applyStyleVariables(style);
-  revertPageTranslation();
+  if (options.reset) {
+    revertPageTranslation();
+  }
 
   const translationMap = new Map(response.translations.map((item) => [item.id, item.text]));
   let appliedCount = 0;
@@ -93,10 +101,11 @@ export function applyPageTranslation(
       continue;
     }
 
-    const snapshot: BlockSnapshot = {
+    const snapshot = snapshots.get(block.segment.id) ?? {
       element: block.element,
       originalHtml: block.element.innerHTML
     };
+    restoreBlock(snapshot);
 
     if (displayMode === 'translated-only') {
       block.element.textContent = translatedText;

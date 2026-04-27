@@ -4,6 +4,7 @@ import { type DisplayMode, type TranslationResponse, summarizeUsage } from '@tra
 import { fetchBridgeHealth, translateWithBridge } from './bridge-client';
 import type { BridgeSettings, ContentPagePayload, ContentSelectionPayload, RuntimeMessage } from './messages';
 import { getSettings } from './settings';
+import { resolvePageBatchCharLimit } from './translation-planning';
 
 interface CachedPageTranslation {
   cacheKey: string;
@@ -74,7 +75,9 @@ async function translatePage(tabId: number, displayMode: DisplayMode): Promise<{
   let response: TranslationResponse | undefined = cached?.cacheKey === cacheKey ? cached.response : undefined;
 
   if (!response) {
-    const batches = batchSegments(payload.segments, 2200);
+    const totalChars = payload.segments.reduce((sum, segment) => sum + segment.text.length, 0);
+    const batchCharLimit = resolvePageBatchCharLimit(totalChars, payload.segments.length);
+    const batches = batchSegments(payload.segments, batchCharLimit);
     const translatedItems: TranslationResponse['translations'] = [];
     const warnings: string[] = [];
     let durationMs = 0;
@@ -82,6 +85,8 @@ async function translatePage(tabId: number, displayMode: DisplayMode): Promise<{
     logWorker('page translation cache miss', {
       tabId,
       batchCount: batches.length,
+      batchCharLimit,
+      totalChars,
       targetLanguage: settings.targetLanguage
     });
 
@@ -123,6 +128,18 @@ async function translatePage(tabId: number, displayMode: DisplayMode): Promise<{
       translatedItems.push(...result.response.translations);
       warnings.push(...result.response.warnings);
       durationMs += result.response.usage.durationMs;
+
+      await sendContentMessage(tabId, {
+        type: 'apply-page-translation',
+        displayMode,
+        response: result.response,
+        style: {
+          translatedFontFamily: settings.translatedFontFamily,
+          translatedTextColor: settings.translatedTextColor
+        },
+        reset: index === 0
+      });
+
       logWorker('page batch success', {
         tabId,
         batchIndex: index + 1,
@@ -148,17 +165,18 @@ async function translatePage(tabId: number, displayMode: DisplayMode): Promise<{
       requestId: response.requestId,
       translatedCount: response.translations.length
     });
-  }
 
-  await sendContentMessage(tabId, {
-    type: 'apply-page-translation',
-    displayMode,
-    response,
-    style: {
-      translatedFontFamily: settings.translatedFontFamily,
-      translatedTextColor: settings.translatedTextColor
-    }
-  });
+    await sendContentMessage(tabId, {
+      type: 'apply-page-translation',
+      displayMode,
+      response,
+      style: {
+        translatedFontFamily: settings.translatedFontFamily,
+        translatedTextColor: settings.translatedTextColor
+      },
+      reset: true
+    });
+  }
 
   logWorker('page translation applied', {
     tabId,

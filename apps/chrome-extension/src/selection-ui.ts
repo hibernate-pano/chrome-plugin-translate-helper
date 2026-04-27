@@ -4,10 +4,13 @@ import type { ContentSelectionPayload, TranslatedTextStyle } from './messages';
 
 const BUBBLE_ID = 'translate-helper-selection-bubble';
 const POPUP_ID = 'translate-helper-selection-popup';
+const COPY_FEEDBACK_RESET_MS = 1200;
 
 let pendingSelection: ContentSelectionPayload | undefined;
 let lastSelectionAnchor: ContentSelectionPayload['anchorRect'];
 let retryHandler: (() => void) | undefined;
+let popupVisible = false;
+let copyFeedbackTimeout: number | undefined;
 
 function ensureBubble(): HTMLButtonElement {
   let bubble = document.getElementById(BUBBLE_ID) as HTMLButtonElement | null;
@@ -100,12 +103,59 @@ async function copyText(text: string): Promise<void> {
   }
 }
 
+function hidePopup(): void {
+  const popup = document.getElementById(POPUP_ID) as HTMLDivElement | null;
+  if (!popup) {
+    popupVisible = false;
+    return;
+  }
+
+  popup.style.display = 'none';
+  popupVisible = false;
+}
+
+function clearCopyFeedbackTimer(): void {
+  if (copyFeedbackTimeout === undefined) {
+    return;
+  }
+
+  window.clearTimeout(copyFeedbackTimeout);
+  copyFeedbackTimeout = undefined;
+}
+
+function handleDocumentPointerDown(event: MouseEvent): void {
+  if (!popupVisible) {
+    return;
+  }
+
+  const popup = document.getElementById(POPUP_ID);
+  const bubble = document.getElementById(BUBBLE_ID);
+  const target = event.target as Node | null;
+  if (!target) {
+    return;
+  }
+
+  if (popup?.contains(target) || bubble?.contains(target)) {
+    return;
+  }
+
+  hidePopup();
+}
+
+function handleEscapeKey(event: KeyboardEvent): void {
+  if (event.key === 'Escape' && popupVisible) {
+    hidePopup();
+  }
+}
+
 export function clearSelectionUI(): void {
+  clearCopyFeedbackTimer();
   document.getElementById(BUBBLE_ID)?.remove();
   document.getElementById(POPUP_ID)?.remove();
   pendingSelection = undefined;
   lastSelectionAnchor = undefined;
   retryHandler = undefined;
+  popupVisible = false;
 }
 
 export function updateSelectionBubble(selectionPayload: ContentSelectionPayload | undefined): void {
@@ -138,6 +188,7 @@ export function showSelectionPopup(input: {
 }): void {
   const popup = ensurePopup();
   popup.style.display = 'block';
+  popupVisible = true;
   positionElement(popup, input.anchorRect ?? lastSelectionAnchor);
 
   if (input.state === 'loading') {
@@ -159,7 +210,7 @@ export function showSelectionPopup(input: {
     `;
     popup.querySelector<HTMLButtonElement>('[data-role="retry"]')?.addEventListener('click', () => retryHandler?.());
     popup.querySelector<HTMLButtonElement>('[data-role="dismiss"]')?.addEventListener('click', () => {
-      popup.style.display = 'none';
+      hidePopup();
     });
     return;
   }
@@ -177,7 +228,31 @@ export function showSelectionPopup(input: {
     </div>
   `;
   popup.querySelector<HTMLButtonElement>('[data-role="copy"]')?.addEventListener('click', () => {
-    void copyText(translatedText);
+    const button = popup.querySelector<HTMLButtonElement>('[data-role="copy"]');
+    if (!button) {
+      return;
+    }
+
+    button.disabled = true;
+    button.textContent = 'Copying…';
+    void copyText(translatedText)
+      .then(() => {
+        button.textContent = 'Copied';
+      })
+      .catch(() => {
+        button.textContent = 'Copy failed';
+      })
+      .finally(() => {
+        clearCopyFeedbackTimer();
+        copyFeedbackTimeout = window.setTimeout(() => {
+          button.disabled = false;
+          button.textContent = 'Copy';
+          copyFeedbackTimeout = undefined;
+        }, COPY_FEEDBACK_RESET_MS);
+      });
   });
   popup.querySelector<HTMLButtonElement>('[data-role="retry"]')?.addEventListener('click', () => retryHandler?.());
 }
+
+document.addEventListener('mousedown', handleDocumentPointerDown, true);
+document.addEventListener('keydown', handleEscapeKey, true);

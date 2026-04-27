@@ -4,9 +4,28 @@ import { applyPageTranslation, revertPageTranslation } from './page-renderer';
 import { clearSelectionUI, registerSelectionRetry, showSelectionPopup, updateSelectionBubble } from './selection-ui';
 
 let lastRenderedVersion = currentPageVersion();
+let selectionRefreshQueued = false;
+let lastSelectionSignature = '';
+
+function selectionSignature(payload: ReturnType<typeof collectSelectionPayload>): string {
+  if (!payload) {
+    return '';
+  }
+
+  return JSON.stringify({
+    text: payload.segments.map((segment) => segment.text).join('\n'),
+    anchorRect: payload.anchorRect
+  });
+}
 
 function refreshSelectionBubble(): void {
   const selectionPayload = collectSelectionPayload();
+  const signature = selectionSignature(selectionPayload);
+  if (signature === lastSelectionSignature) {
+    return;
+  }
+  lastSelectionSignature = signature;
+
   updateSelectionBubble(selectionPayload);
   if (selectionPayload) {
     registerSelectionRetry(() => {
@@ -22,21 +41,30 @@ function refreshSelectionBubble(): void {
   }
 }
 
-document.addEventListener('selectionchange', () => {
-  window.setTimeout(refreshSelectionBubble, 10);
-});
+function scheduleSelectionRefresh(): void {
+  if (selectionRefreshQueued) {
+    return;
+  }
 
-window.addEventListener('scroll', () => {
-  refreshSelectionBubble();
+  selectionRefreshQueued = true;
+  window.requestAnimationFrame(() => {
+    selectionRefreshQueued = false;
+    refreshSelectionBubble();
+  });
+}
+
+document.addEventListener('selectionchange', () => {
+  scheduleSelectionRefresh();
 });
 
 window.addEventListener('beforeunload', () => {
   clearSelectionUI();
+  lastSelectionSignature = '';
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === 'local' && changes.bridgeSettings) {
-    refreshSelectionBubble();
+    scheduleSelectionRefresh();
   }
 });
 
@@ -61,7 +89,13 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResp
 
   if (message.type === 'apply-page-translation') {
     const { blocks } = collectPagePayload();
-    const result = applyPageTranslation(blocks, message.response, message.displayMode, message.style);
+    const result = applyPageTranslation(
+      blocks,
+      message.response,
+      message.displayMode,
+      message.style,
+      message.reset === undefined ? {} : { reset: message.reset }
+    );
     lastRenderedVersion = currentPageVersion();
     sendResponse(result);
     return true;

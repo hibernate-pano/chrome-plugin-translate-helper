@@ -54,4 +54,50 @@ describe('page renderer', () => {
     revertPageTranslation();
     expect(block.element.textContent).toBe('Original paragraph');
   });
+
+  it('renders page batches incrementally without clearing earlier results', () => {
+    document.body.innerHTML = '<p id="first">First paragraph</p><p id="second">Second paragraph</p>';
+    const blocks: PageBlock[] = [
+      {
+        segment: { id: 'seg-1', text: 'First paragraph', blockType: 'paragraph' },
+        element: document.getElementById('first') as HTMLElement
+      },
+      {
+        segment: { id: 'seg-2', text: 'Second paragraph', blockType: 'paragraph' },
+        element: document.getElementById('second') as HTMLElement
+      }
+    ];
+
+    applyPageTranslation(
+      blocks,
+      {
+        requestId: 'req-b1',
+        translations: [{ id: 'seg-1', text: '第一段翻译' }],
+        usage: { segmentCount: 1, charCount: 5, durationMs: 1 },
+        warnings: []
+      },
+      'bilingual',
+      style,
+      { reset: true }
+    );
+    expect(document.body.textContent).toContain('第一段翻译');
+    expect(document.body.textContent).not.toContain('第二段翻译');
+
+    applyPageTranslation(
+      blocks,
+      {
+        requestId: 'req-b2',
+        translations: [{ id: 'seg-2', text: '第二段翻译' }],
+        usage: { segmentCount: 1, charCount: 5, durationMs: 1 },
+        warnings: []
+      },
+      'bilingual',
+      style
+    );
+
+    const translatedNodes = Array.from(document.querySelectorAll('.translate-helper-bilingual')).map((node) => node.textContent);
+    expect(translatedNodes).toEqual(['第一段翻译', '第二段翻译']);
+    expect(document.getElementById('first')?.textContent).toBe('First paragraph');
+    expect(document.getElementById('second')?.textContent).toBe('Second paragraph');
+  });
 });

@@ -60,6 +60,7 @@ export type RuntimeMessage =
       displayMode: DisplayMode;
       response: TranslationResponse;
       style: TranslatedTextStyle;
+      reset?: boolean;
     }
   | {
       type: 'show-selection-result';

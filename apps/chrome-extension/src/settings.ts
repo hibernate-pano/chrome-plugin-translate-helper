@@ -1,6 +1,9 @@
+import type { DisplayMode } from '@translate-helper/shared-protocol';
+
 import type { BridgeSettings } from './messages';
 
 export const SETTINGS_KEY = 'bridgeSettings';
+export const POPUP_UI_STATE_KEY = 'popupUiState';
 
 export const DEFAULT_SETTINGS: BridgeSettings = {
   bridgeUrl: 'http://127.0.0.1:43189',
@@ -8,6 +11,14 @@ export const DEFAULT_SETTINGS: BridgeSettings = {
   targetLanguage: 'zh-CN',
   translatedTextColor: '#275d84',
   translatedFontFamily: 'Georgia, "Noto Serif SC", serif'
+};
+
+export interface PopupUiState {
+  lastPageMode: DisplayMode;
+}
+
+export const DEFAULT_POPUP_UI_STATE: PopupUiState = {
+  lastPageMode: 'translated-only'
 };
 
 function normalizeString(value: unknown, fallback: string): string {
@@ -34,6 +45,17 @@ export function normalizeSettings(value: unknown): BridgeSettings {
   };
 }
 
+export function normalizePopupUiState(value: unknown): PopupUiState {
+  if (!value || typeof value !== 'object') {
+    return { ...DEFAULT_POPUP_UI_STATE };
+  }
+
+  const record = value as Record<string, unknown>;
+  return {
+    lastPageMode: record.lastPageMode === 'bilingual' ? 'bilingual' : DEFAULT_POPUP_UI_STATE.lastPageMode
+  };
+}
+
 export async function getSettings(storageArea: Pick<chrome.storage.StorageArea, 'get'> = chrome.storage.local): Promise<BridgeSettings> {
   const result = await storageArea.get(SETTINGS_KEY);
   return normalizeSettings(result[SETTINGS_KEY]);
@@ -45,5 +67,21 @@ export async function saveSettings(
 ): Promise<BridgeSettings> {
   const normalized = normalizeSettings(settings);
   await storageArea.set({ [SETTINGS_KEY]: normalized });
+  return normalized;
+}
+
+export async function getPopupUiState(
+  storageArea: Pick<chrome.storage.StorageArea, 'get'> = chrome.storage.local
+): Promise<PopupUiState> {
+  const result = await storageArea.get(POPUP_UI_STATE_KEY);
+  return normalizePopupUiState(result[POPUP_UI_STATE_KEY]);
+}
+
+export async function savePopupUiState(
+  state: PopupUiState,
+  storageArea: Pick<chrome.storage.StorageArea, 'set'> = chrome.storage.local
+): Promise<PopupUiState> {
+  const normalized = normalizePopupUiState(state);
+  await storageArea.set({ [POPUP_UI_STATE_KEY]: normalized });
   return normalized;
 }

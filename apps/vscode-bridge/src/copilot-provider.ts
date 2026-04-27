@@ -17,6 +17,9 @@ interface CopilotProviderOptions {
   logger: ProviderLogger;
 }
 
+const MIN_TIMEOUT_SPLIT_PAGE_BATCH_CHAR_LIMIT = 700;
+const MAX_PROVIDER_REQUEST_TIMEOUT_MS = 150000;
+
 export class CopilotTranslationProvider implements TranslationProvider {
   readonly id = 'copilot';
   private cachedModel: vscode.LanguageModelChat | undefined;
@@ -53,7 +56,16 @@ export class CopilotTranslationProvider implements TranslationProvider {
     );
 
     if (request.mode === 'selection') {
-      const text = await this.sendTextRequest(model, buildSelectionMessages(request), false, request.requestId, 'selection', 1, 1);
+      const text = await this.sendTextRequest(
+        model,
+        buildSelectionMessages(request),
+        false,
+        request.requestId,
+        'selection',
+        1,
+        1,
+        this.options.requestTimeoutMs
+      );
       translations.push({
         id: request.segments[0]!.id,
         text: text.trim()
@@ -66,27 +78,9 @@ export class CopilotTranslationProvider implements TranslationProvider {
 
     const batches = batchSegments(request.segments, this.options.pageBatchCharLimit);
     for (const [index, batch] of batches.entries()) {
-      const batchRequest: TranslationRequest = {
-        ...request,
-        segments: batch.segments
-      };
-      this.options.logger.info(
-        `[provider] request=${request.requestId} batch=${index + 1}/${batches.length} segments=${batch.segments.length} chars=${batch.charCount} start`
-      );
-      const text = await this.sendTextRequest(
-        model,
-        buildPageMessages(batchRequest),
-        true,
-        request.requestId,
-        'page',
-        index + 1,
-        batches.length
-      );
-      const parsed = parsePageTranslations(text, batchRequest);
-      translations.push(...parsed);
-      this.options.logger.info(
-        `[provider] request=${request.requestId} batch=${index + 1}/${batches.length} parsedTranslations=${parsed.length}`
-      );
+      const result = await this.translatePageBatchWithRetry(model, request, batch.segments, index + 1, batches.length, batch.charCount);
+      translations.push(...result.translations);
+      warnings.push(...result.warnings);
       if (batches.length > 1) {
         warnings.push(`page request processed in batch ${index + 1}/${batches.length} (${batch.charCount} chars).`);
       }
@@ -96,6 +90,71 @@ export class CopilotTranslationProvider implements TranslationProvider {
       `[provider] request=${request.requestId} mode=page done durationMs=${Date.now() - startedAt} translatedSegments=${translations.length} warnings=${warnings.length}`
     );
     return createSuccessResponse(request, translations, Date.now() - startedAt, warnings);
+  }
+
+  private async translatePageBatchWithRetry(
+    model: vscode.LanguageModelChat,
+    request: TranslationRequest,
+    segments: TranslationRequest['segments'],
+    batchIndex: number,
+    batchCount: number,
+    charCount: number
+  ): Promise<{ translations: TranslationResponse['translations']; warnings: string[] }> {
+    const batchRequest: TranslationRequest = {
+      ...request,
+      segments
+    };
+
+    this.options.logger.info(
+      `[provider] request=${request.requestId} batch=${batchIndex}/${batchCount} segments=${segments.length} chars=${charCount} start`
+    );
+
+    try {
+      const text = await this.sendTextRequest(
+        model,
+        buildPageMessages(batchRequest),
+        true,
+        request.requestId,
+        'page',
+        batchIndex,
+        batchCount,
+        resolveProviderRequestTimeoutMs(charCount, this.options.requestTimeoutMs)
+      );
+      const parsed = parsePageTranslations(text, batchRequest);
+      this.options.logger.info(
+        `[provider] request=${request.requestId} batch=${batchIndex}/${batchCount} parsedTranslations=${parsed.length}`
+      );
+      return { translations: parsed, warnings: [] };
+    } catch (error) {
+      if (!(error instanceof BridgeError) || error.code !== 'timeout' || segments.length <= 1 || charCount <= MIN_TIMEOUT_SPLIT_PAGE_BATCH_CHAR_LIMIT) {
+        throw error;
+      }
+
+      const nestedBatches = splitTimedOutBatch(segments, charCount);
+      this.options.logger.warn(
+        `[provider] request=${request.requestId} batch=${batchIndex}/${batchCount} timeoutRetry nested=${nestedBatches.length} chars=${charCount}`
+      );
+
+      const warnings = [
+        `page batch ${batchIndex}/${batchCount} timed out at ${charCount} chars and was retried in ${nestedBatches.length} smaller batches.`
+      ];
+      const translations: TranslationResponse['translations'] = [];
+
+      for (const [nestedIndex, nestedBatch] of nestedBatches.entries()) {
+        const nestedResult = await this.translatePageBatchWithRetry(
+          model,
+          request,
+          nestedBatch.segments,
+          nestedIndex + 1,
+          nestedBatches.length,
+          nestedBatch.charCount
+        );
+        translations.push(...nestedResult.translations);
+        warnings.push(...nestedResult.warnings);
+      }
+
+      return { translations, warnings };
+    }
   }
 
   private async getModel(): Promise<vscode.LanguageModelChat> {
@@ -139,9 +198,10 @@ export class CopilotTranslationProvider implements TranslationProvider {
     requestId: string,
     mode: TranslationRequest['mode'],
     batchIndex: number,
-    batchCount: number
+    batchCount: number,
+    timeoutMs: number
   ): Promise<string> {
-    const text = await this.collectResponse(model, messages, requestId, mode, batchIndex, batchCount, 'primary');
+    const text = await this.collectResponse(model, messages, requestId, mode, batchIndex, batchCount, 'primary', timeoutMs);
     if (!repairJsonOnce || extractJsonArray(text)) {
       return text;
     }
@@ -162,7 +222,8 @@ export class CopilotTranslationProvider implements TranslationProvider {
       mode,
       batchIndex,
       batchCount,
-      'repair'
+      'repair',
+      timeoutMs
     );
 
     if (!extractJsonArray(repaired)) {
@@ -187,15 +248,16 @@ export class CopilotTranslationProvider implements TranslationProvider {
     mode: TranslationRequest['mode'],
     batchIndex: number,
     batchCount: number,
-    phase: 'primary' | 'repair'
+    phase: 'primary' | 'repair',
+    timeoutMs: number
   ): Promise<string> {
     const cancellation = new vscode.CancellationTokenSource();
-    const timeout = setTimeout(() => cancellation.cancel(), this.options.requestTimeoutMs);
+    const timeout = setTimeout(() => cancellation.cancel(), timeoutMs);
     const startedAt = Date.now();
 
     try {
       this.options.logger.info(
-        `[provider] request=${requestId} mode=${mode} batch=${batchIndex}/${batchCount} phase=${phase} sendRequest start timeoutMs=${this.options.requestTimeoutMs}`
+        `[provider] request=${requestId} mode=${mode} batch=${batchIndex}/${batchCount} phase=${phase} sendRequest start timeoutMs=${timeoutMs}`
       );
       const response = await model.sendRequest(messages, {}, cancellation.token);
       let output = '';
@@ -316,6 +378,32 @@ function modelKeywords(model: vscode.LanguageModelChat): string {
 
 function previewText(text: string): string {
   return text.replace(/\s+/g, ' ').trim().slice(0, 120);
+}
+
+function resolveProviderRequestTimeoutMs(charCount: number, baseTimeoutMs: number): number {
+  const extraSteps = Math.max(0, Math.ceil((charCount - 800) / 500));
+  return Math.min(MAX_PROVIDER_REQUEST_TIMEOUT_MS, baseTimeoutMs + extraSteps * 6000);
+}
+
+function splitTimedOutBatch(
+  segments: TranslationRequest['segments'],
+  charCount: number
+): Array<{ segments: TranslationRequest['segments']; charCount: number }> {
+  const reducedLimit = Math.max(MIN_TIMEOUT_SPLIT_PAGE_BATCH_CHAR_LIMIT, Math.floor(charCount / 2));
+  const nestedBatches = batchSegments(segments, reducedLimit);
+  if (nestedBatches.length > 1) {
+    return nestedBatches;
+  }
+
+  const midpoint = Math.ceil(segments.length / 2);
+  const left = segments.slice(0, midpoint);
+  const right = segments.slice(midpoint);
+  return [left, right]
+    .filter((batch) => batch.length > 0)
+    .map((batch) => ({
+      segments: batch,
+      charCount: batch.reduce((sum, segment) => sum + segment.text.length, 0)
+    }));
 }
 
 function buildSelectionMessages(request: TranslationRequest): vscode.LanguageModelChatMessage[] {
