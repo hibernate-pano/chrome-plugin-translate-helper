@@ -1,6 +1,6 @@
 import { collectPagePayload, collectSelectionPayload, currentPageVersion, invalidatePageCache } from './document-extractor';
 import { type RuntimeMessage } from './messages';
-import { applyPageTranslation, revertPageTranslation } from './page-renderer';
+import { applyPageTranslation, revertPageTranslation, applyFragment, registerPageBlocks } from './page-renderer';
 import { clearSelectionUI, registerSelectionRetry, showSelectionPopup, updateSelectionBubble } from './selection-ui';
 
 let lastRenderedVersion = currentPageVersion();
@@ -107,6 +107,13 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResp
     return true;
   }
 
+  if (message.type === 'prepare-page-stream') {
+    const { blocks } = collectPagePayload();
+    registerPageBlocks(blocks, { reset: true });
+    sendResponse({ ok: true, registeredCount: blocks.length });
+    return true;
+  }
+
   if (message.type === 'show-selection-result') {
     showSelectionPopup({
       state: 'result',
@@ -119,6 +126,47 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResp
   }
 
   if (message.type === 'show-selection-error') {
+    showSelectionPopup({
+      state: 'error',
+      anchorRect: message.anchorRect,
+      message: message.message
+    });
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (message.type === 'stream-fragment') {
+    applyFragment(
+      message.segmentId,
+      message.text,
+      message.done,
+      message.isLast,
+      message.displayMode,
+      message.style,
+      message.reset
+    );
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (message.type === 'stream-selection') {
+    showSelectionPopup({
+      state: 'streaming',
+      anchorRect: message.anchorRect,
+      text: message.text,
+      done: message.done,
+      style: message.style
+    });
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (message.type === 'stream-selection-done') {
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (message.type === 'stream-selection-error') {
     showSelectionPopup({
       state: 'error',
       anchorRect: message.anchorRect,

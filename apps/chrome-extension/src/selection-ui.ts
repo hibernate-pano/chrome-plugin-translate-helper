@@ -179,11 +179,15 @@ export function registerSelectionRetry(handler: () => void): void {
   retryHandler = handler;
 }
 
+type PopupState = 'loading' | 'error' | 'result' | 'streaming';
+
 export function showSelectionPopup(input: {
   anchorRect?: ContentSelectionPayload['anchorRect'];
-  state: 'loading' | 'error' | 'result';
+  state: PopupState;
   message?: string;
   response?: TranslationResponse;
+  text?: string;
+  done?: boolean;
   style?: TranslatedTextStyle;
 }): void {
   const popup = ensurePopup();
@@ -212,6 +216,51 @@ export function showSelectionPopup(input: {
     popup.querySelector<HTMLButtonElement>('[data-role="dismiss"]')?.addEventListener('click', () => {
       hidePopup();
     });
+    return;
+  }
+
+  if (input.state === 'streaming') {
+    const text = input.text ?? '';
+    const isDone = input.done ?? false;
+    popup.innerHTML = `
+      <div style="font-size: 12px; color: #6f5e48; margin-bottom: 8px;">${isDone ? 'Selection translation' : 'Translating…'}</div>
+      <div style="font-size: 15px; color:${escapeHtml(input.style?.translatedTextColor ?? '#275d84')}; font-family:${escapeHtml(
+        input.style?.translatedFontFamily ?? 'Georgia, serif'
+      )}; white-space: pre-wrap;">${escapeHtml(text)}${isDone ? '' : '<span style="animation:blink 1s infinite">|</span>'}</div>
+      ${isDone ? `
+      <div style="margin-top: 12px; display:flex; gap:8px; align-items:center;">
+        <button data-role="copy" style="border:0; border-radius:10px; background:#2f5e78; color:#fff; padding:8px 10px; cursor:pointer;">Copy</button>
+        <button data-role="retry" style="border:0; border-radius:10px; background:#efe5d8; color:#3a3024; padding:8px 10px; cursor:pointer;">Retry</button>
+        <button data-role="dismiss" style="border:0; border-radius:10px; background:#efe5d8; color:#3a3024; padding:8px 10px; cursor:pointer;">Dismiss</button>
+      </div>
+      ` : ''}
+    `;
+    if (isDone) {
+      const translatedText = text;
+      popup.querySelector<HTMLButtonElement>('[data-role="copy"]')?.addEventListener('click', () => {
+        const button = popup.querySelector<HTMLButtonElement>('[data-role="copy"]');
+        if (!button) return;
+        button.disabled = true;
+        button.textContent = 'Copying…';
+        void copyText(translatedText)
+          .then(() => {
+            button.textContent = 'Copied';
+          })
+          .catch(() => {
+            button.textContent = 'Copy failed';
+          })
+          .finally(() => {
+            clearCopyFeedbackTimer();
+            copyFeedbackTimeout = window.setTimeout(() => {
+              button.disabled = false;
+              button.textContent = 'Copy';
+              copyFeedbackTimeout = undefined;
+            }, COPY_FEEDBACK_RESET_MS);
+          });
+      });
+      popup.querySelector<HTMLButtonElement>('[data-role="retry"]')?.addEventListener('click', () => retryHandler?.());
+      popup.querySelector<HTMLButtonElement>('[data-role="dismiss"]')?.addEventListener('click', () => hidePopup());
+    }
     return;
   }
 

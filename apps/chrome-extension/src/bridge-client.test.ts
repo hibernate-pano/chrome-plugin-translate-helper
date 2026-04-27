@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { fetchBridgeHealth, translateWithBridge } from './bridge-client';
+import { fetchBridgeHealth, translateWithBridge, translateWithBridgeStream } from './bridge-client';
 import { DEFAULT_SETTINGS } from './settings';
 
 describe('fetchBridgeHealth', () => {
@@ -141,5 +141,92 @@ describe('translateWithBridge', () => {
     expect(result.ok).toBe(true);
     expect(timeoutSpy).toHaveBeenLastCalledWith(expect.any(Number));
     expect(timeoutSpy.mock.lastCall?.[0]).toBeGreaterThan(45000);
+  });
+});
+
+describe('translateWithBridgeStream', () => {
+  const request = {
+    requestId: 'req-stream',
+    mode: 'page' as const,
+    displayMode: 'bilingual' as const,
+    targetLang: 'zh-CN',
+    pageContext: {
+      url: 'https://example.com/stream',
+      title: 'Stream'
+    },
+    segments: [{ id: 'seg-1', text: 'Hello world', blockType: 'paragraph' as const }]
+  };
+
+  it('parses SSE events split across transport chunks', async () => {
+    const chunks = [
+      'event: fragment\ndata: {"requestId":"req-stream","segmentId":"seg-1","text":"你',
+      '好","done":false,"isLast":false}\n\n',
+      'event: done\ndata: {"durationMs":12}\n\n'
+    ];
+
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            for (const chunk of chunks) {
+              controller.enqueue(new TextEncoder().encode(chunk));
+            }
+            controller.close();
+          }
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' }
+        }
+      )
+    );
+
+    const fragments: Array<{ text: string; done: boolean }> = [];
+    const done = vi.fn();
+    const error = vi.fn();
+
+    const result = await translateWithBridgeStream(request, DEFAULT_SETTINGS, {
+      onFragment: (fragment) => {
+        fragments.push({ text: fragment.text, done: fragment.done });
+      },
+      onDone: done,
+      onError: error
+    }, fetchImpl);
+
+    expect(result.ok).toBe(true);
+    expect(fragments).toEqual([{ text: '你好', done: false }]);
+    expect(done).toHaveBeenCalledWith(12);
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('surfaces non-ok stream responses as errors', async () => {
+    const errorPayload = {
+      error: {
+        code: 'provider_error',
+        message: 'bridge failed',
+        retryable: true
+      }
+    };
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(errorPayload), {
+        status: 502,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    );
+
+    const onError = vi.fn();
+
+    const result = await translateWithBridgeStream(request, DEFAULT_SETTINGS, {
+      onFragment: () => undefined,
+      onDone: () => undefined,
+      onError
+    }, fetchImpl);
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatchObject({
+      code: 'provider_error',
+      message: 'bridge failed'
+    });
+    expect(onError).toHaveBeenCalledWith('provider_error', 'bridge failed');
   });
 });

@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { TranslationRequest, TranslationResponse } from '../../../packages/shared-protocol/src/index';
+import type { TranslationRequest, TranslationResponse, StreamFragment, TranslationErrorCode } from '../../../packages/shared-protocol/src/index';
 
 import type { ProviderHealth, TranslationProvider } from './types';
 import { BridgeError } from './types';
@@ -90,6 +90,138 @@ export class CopilotTranslationProvider implements TranslationProvider {
       `[provider] request=${request.requestId} mode=page done durationMs=${Date.now() - startedAt} translatedSegments=${translations.length} warnings=${warnings.length}`
     );
     return createSuccessResponse(request, translations, Date.now() - startedAt, warnings);
+  }
+
+  async translateStream(
+    request: TranslationRequest,
+    onFragment: (fragment: StreamFragment) => void,
+    onError: (code: TranslationErrorCode, message: string) => void,
+    onDone: (durationMs: number) => void
+  ): Promise<void> {
+    const model = await this.getModel();
+    const startedAt = Date.now();
+    const charCount = request.segments.reduce((sum, segment) => sum + segment.text.length, 0);
+    const segmentIds = request.segments.map((s) => s.id);
+
+    this.options.logger.info(
+      `[provider] request=${request.requestId} mode=${request.mode} translateStream start segments=${request.segments.length} chars=${charCount}`
+    );
+
+    try {
+      const messages = request.mode === 'selection' ? buildSelectionMessages(request) : buildPageMessages(request);
+      await this.streamModelOutput(
+        model,
+        messages,
+        request.requestId,
+        request.mode,
+        segmentIds,
+        onFragment,
+        onDone,
+        startedAt,
+        resolveProviderRequestTimeoutMs(charCount, this.options.requestTimeoutMs)
+      );
+    } catch (error) {
+      const bridgeError = this.toBridgeError(error);
+      this.options.logger.error(
+        `[provider] request=${request.requestId} translateStream failed code=${bridgeError.code} message=${bridgeError.message}`
+      );
+      onError(bridgeError.code, bridgeError.message);
+    }
+  }
+
+  private async streamModelOutput(
+    model: vscode.LanguageModelChat,
+    messages: vscode.LanguageModelChatMessage[],
+    requestId: string,
+    mode: TranslationRequest['mode'],
+    segmentIds: string[],
+    onFragment: (fragment: StreamFragment) => void,
+    onDone: (durationMs: number) => void,
+    startedAt: number,
+    timeoutMs: number
+  ): Promise<void> {
+    const cancellation = new vscode.CancellationTokenSource();
+    const timeout = setTimeout(() => cancellation.cancel(), timeoutMs);
+    try {
+      const response = await model.sendRequest(messages, {}, cancellation.token);
+
+      const segmentTexts = new Map<string, string>();
+      for (const id of segmentIds) {
+        segmentTexts.set(id, '');
+      }
+      let currentSegmentIndex = 0;
+      let buffer = '';
+      let fragmentCount = 0;
+      let foundOpenBracket = false;
+
+      for await (const token of response.text) {
+        buffer += token;
+        fragmentCount++;
+
+        if (!foundOpenBracket) {
+          const bracketPos = buffer.indexOf('[');
+          if (bracketPos >= 0) {
+            buffer = buffer.slice(bracketPos);
+            foundOpenBracket = true;
+          } else {
+            buffer = buffer.slice(-10);
+            continue;
+          }
+        }
+
+        const closePos = buffer.lastIndexOf(']');
+        if (closePos < 0) continue;
+
+        const working = buffer.slice(0, closePos + 1);
+        buffer = buffer.slice(closePos + 1);
+
+        const parseResult = parseStreamingJson(working, segmentIds, currentSegmentIndex);
+        for (const [segId, text] of parseResult.texts) {
+          segmentTexts.set(segId, text);
+          onFragment({
+            requestId,
+            segmentId: segId,
+            text,
+            done: false,
+            isLast: false
+          });
+        }
+
+        if (parseResult.nextIndex > currentSegmentIndex) {
+          for (let k = currentSegmentIndex; k < parseResult.nextIndex; k++) {
+            const segId = segmentIds[k]!;
+            onFragment({
+              requestId,
+              segmentId: segId,
+              text: segmentTexts.get(segId) ?? '',
+              done: true,
+              isLast: false
+            });
+          }
+          currentSegmentIndex = parseResult.nextIndex;
+        }
+      }
+
+      for (let k = currentSegmentIndex; k < segmentIds.length; k++) {
+        const segId = segmentIds[k]!;
+        onFragment({
+          requestId,
+          segmentId: segId,
+          text: segmentTexts.get(segId) ?? '',
+          done: true,
+          isLast: k === segmentIds.length - 1
+        });
+      }
+
+      const durationMs = Date.now() - startedAt;
+      onDone(durationMs);
+      this.options.logger.info(
+        `[provider] request=${requestId} translateStream done durationMs=${durationMs} fragments=${fragmentCount}`
+      );
+    } finally {
+      clearTimeout(timeout);
+      cancellation.dispose();
+    }
   }
 
   private async translatePageBatchWithRetry(
@@ -357,6 +489,37 @@ export class CopilotTranslationProvider implements TranslationProvider {
 
     return new BridgeError('provider_error', 'Unknown provider error.', 502, true);
   }
+}
+
+function parseStreamingJson(
+  json: string,
+  segmentIds: string[],
+  currentIndex: number
+): { texts: Map<string, string>; nextIndex: number } {
+  const texts = new Map<string, string>();
+  let nextIndex = currentIndex;
+
+  try {
+    const array = JSON.parse(json) as Array<Record<string, unknown>>;
+    for (const item of array) {
+      const id = typeof item.id === 'string' ? item.id : undefined;
+      const text = typeof item.text === 'string' ? item.text : undefined;
+      if (id && text) {
+        texts.set(id, text);
+      }
+    }
+    while (nextIndex < segmentIds.length) {
+      const nextSegmentId = segmentIds[nextIndex];
+      if (!nextSegmentId || !texts.has(nextSegmentId)) {
+        break;
+      }
+      nextIndex += 1;
+    }
+  } catch {
+    // Ignore incomplete JSON fragments until the model emits a valid array.
+  }
+
+  return { texts, nextIndex };
 }
 
 function readOptionalString(value: object, key: string): string | undefined {

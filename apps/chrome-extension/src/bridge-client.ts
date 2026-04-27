@@ -3,6 +3,8 @@ import {
   type BridgeHealth,
   type TranslationError,
   type TranslationResponse,
+  type StreamFragment,
+  type TranslationErrorCode,
   validateTranslationRequest
 } from '@translate-helper/shared-protocol';
 
@@ -308,4 +310,220 @@ export async function translateWithBridge(
     });
     return { ok: false, error: toOfflineError() };
   }
+}
+
+export interface StreamCallbacks {
+  onFragment: (fragment: StreamFragment) => void;
+  onError: (code: TranslationErrorCode, message: string) => void;
+  onDone: (durationMs: number) => void;
+}
+
+export interface StreamCallResult {
+  ok: boolean;
+  error?: TranslationError;
+}
+
+export async function translateWithBridgeStream(
+  request: unknown,
+  settings: BridgeSettings,
+  callbacks: StreamCallbacks,
+  fetchImpl: typeof fetch = fetch
+): Promise<StreamCallResult> {
+  let validatedRequest: ReturnType<typeof validateTranslationRequest>;
+  try {
+    validatedRequest = validateTranslationRequest(request);
+  } catch (error) {
+    const invalidRequestError = createError(
+      'invalid_request',
+      error instanceof Error ? error.message : 'Invalid translation request.',
+      false
+    );
+    callbacks.onError(invalidRequestError.code, invalidRequestError.message);
+    return { ok: false, error: invalidRequestError };
+  }
+
+  const timeoutMs = resolveBridgeRequestTimeoutMs(validatedRequest, TRANSLATE_TIMEOUT_MS);
+  const startedAt = Date.now();
+
+  logBridge('info', 'stream request start', {
+    requestId: validatedRequest.requestId,
+    mode: validatedRequest.mode,
+    bridgeUrl: settings.bridgeUrl,
+    timeoutMs,
+    segmentCount: validatedRequest.segments.length,
+    charCount: validatedRequest.segments.reduce((sum, segment) => sum + segment.text.length, 0)
+  });
+
+  let errorResult: TranslationError | undefined;
+
+  const emitError = (error: TranslationError): StreamCallResult => {
+    if (!errorResult) {
+      errorResult = error;
+      callbacks.onError(error.code, error.message);
+    }
+    return { ok: false, error };
+  };
+
+  const doStream = async (): Promise<StreamCallResult> => {
+    try {
+      const response = await fetchImpl(`${settings.bridgeUrl}/translate/stream`, {
+        method: 'POST',
+        headers: {
+          ...headersFromSettings(settings),
+          'X-Request-Id': validatedRequest.requestId
+        },
+        body: JSON.stringify(validatedRequest),
+        signal: withTimeout(timeoutMs)
+      });
+
+      if (response.status === 401 || response.status === 403) {
+        return emitError(toAuthError(response.status));
+      }
+
+      if (response.status === 404) {
+        logBridge('warn', 'stream endpoint not available, falling back to sync');
+        const syncResult = await translateWithBridge(request, settings, fetchImpl);
+        if (syncResult.ok && syncResult.response) {
+          for (const t of syncResult.response.translations) {
+            callbacks.onFragment({
+              requestId: validatedRequest.requestId,
+              segmentId: t.id,
+              text: t.text,
+              done: true,
+              isLast: t.id === syncResult.response!.translations.at(-1)?.id
+            });
+          }
+          callbacks.onDone(syncResult.response.usage.durationMs);
+        } else if (syncResult.error) {
+          return emitError(syncResult.error);
+        }
+        return { ok: true };
+      }
+
+      if (!response.ok) {
+        const parsedPayload = await parseJsonSafe(response);
+        const parsedError = isRecord(parsedPayload) ? normalizeErrorPayload(parsedPayload.error) : undefined;
+        logBridge('warn', 'stream request failed', {
+          requestId: validatedRequest.requestId,
+          status: response.status,
+          errorCode: parsedError?.code,
+          errorMessage: parsedError?.message
+        });
+        return emitError(parsedError ?? createError('provider_error', `Bridge stream request failed (${response.status}).`, true));
+      }
+
+      if (!response.body) {
+        return emitError(createError('invalid_response', 'Bridge stream response had no body.', true));
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let pendingText = '';
+      let eventType = '';
+      let eventDataLines: string[] = [];
+
+      const flushEvent = (): void => {
+        if (!eventType || eventDataLines.length === 0) {
+          eventType = '';
+          eventDataLines = [];
+          return;
+        }
+
+        const eventData = eventDataLines.join('\n');
+        if (eventType === 'fragment') {
+          try {
+            const fragment = JSON.parse(eventData) as StreamFragment;
+            callbacks.onFragment(fragment);
+          } catch (error) {
+            logBridge('warn', 'stream fragment parse failed', {
+              requestId: validatedRequest.requestId,
+              error: error instanceof Error ? error.message : 'unknown'
+            });
+          }
+        } else if (eventType === 'error') {
+          try {
+            const err = JSON.parse(eventData) as TranslationError;
+            emitError(createError(err.code, err.message, err.retryable, err.details));
+          } catch (error) {
+            logBridge('warn', 'stream error event parse failed', {
+              requestId: validatedRequest.requestId,
+              error: error instanceof Error ? error.message : 'unknown'
+            });
+          }
+        } else if (eventType === 'done') {
+          try {
+            const doneData = JSON.parse(eventData) as { durationMs: number };
+            callbacks.onDone(doneData.durationMs);
+          } catch (error) {
+            logBridge('warn', 'stream done event parse failed', {
+              requestId: validatedRequest.requestId,
+              error: error instanceof Error ? error.message : 'unknown'
+            });
+          }
+        }
+
+        eventType = '';
+        eventDataLines = [];
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        pendingText += decoder.decode(value, { stream: true });
+        const lines = pendingText.split(/\r?\n/);
+        pendingText = lines.pop() ?? '';
+
+        for (const line of lines) {
+          if (line.startsWith('event:')) {
+            eventType = line.slice(6).trim();
+          } else if (line.startsWith('data:')) {
+            eventDataLines.push(line.slice(5).trimStart());
+          } else if (line === '') {
+            flushEvent();
+          }
+        }
+      }
+
+      pendingText += decoder.decode();
+      if (pendingText.length > 0) {
+        for (const line of pendingText.split(/\r?\n/)) {
+          if (line.startsWith('event:')) {
+            eventType = line.slice(6).trim();
+          } else if (line.startsWith('data:')) {
+            eventDataLines.push(line.slice(5).trimStart());
+          } else if (line === '') {
+            flushEvent();
+          }
+        }
+      }
+      flushEvent();
+
+      logBridge('info', 'stream request complete', {
+        requestId: validatedRequest.requestId,
+        durationMs: Date.now() - startedAt
+      });
+      return errorResult ? { ok: false, error: errorResult } : { ok: true };
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'TimeoutError') {
+        logBridge('warn', 'stream request timeout', {
+          requestId: validatedRequest.requestId,
+          timeoutMs,
+          durationMs: Date.now() - startedAt
+        });
+        return emitError(createError('timeout', 'Bridge stream request timed out. Try again after VS Code finishes the translation.', true));
+      }
+      logBridge('error', 'stream request error', {
+        requestId: validatedRequest.requestId,
+        error: error instanceof Error ? error.message : 'unknown'
+      });
+      return emitError(
+        error instanceof Error
+          ? createError('provider_error', error.message, true)
+          : createError('provider_error', 'Stream request failed.', true)
+      );
+    }
+  };
+
+  return doStream();
 }

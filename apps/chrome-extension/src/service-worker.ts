@@ -1,17 +1,8 @@
-import { batchSegments } from '@translate-helper/text-segmentation';
-import { type DisplayMode, type TranslationResponse, summarizeUsage } from '@translate-helper/shared-protocol';
+import { type DisplayMode, type StreamFragment } from '@translate-helper/shared-protocol';
 
-import { fetchBridgeHealth, translateWithBridge } from './bridge-client';
-import type { BridgeSettings, ContentPagePayload, ContentSelectionPayload, RuntimeMessage } from './messages';
+import { fetchBridgeHealth, translateWithBridgeStream } from './bridge-client';
+import type { ContentPagePayload, ContentSelectionPayload, RuntimeMessage } from './messages';
 import { getSettings } from './settings';
-import { resolvePageBatchCharLimit } from './translation-planning';
-
-interface CachedPageTranslation {
-  cacheKey: string;
-  response: TranslationResponse;
-}
-
-const cachedTranslations = new Map<number, CachedPageTranslation>();
 
 function logWorker(message: string, extra?: Record<string, unknown>): void {
   console.info(`[translate-helper/worker] ${message}`, extra ?? '');
@@ -19,14 +10,6 @@ function logWorker(message: string, extra?: Record<string, unknown>): void {
 
 function warnWorker(message: string, extra?: Record<string, unknown>): void {
   console.warn(`[translate-helper/worker] ${message}`, extra ?? '');
-}
-
-function translationCacheKey(payload: ContentPagePayload, settings: BridgeSettings): string {
-  return JSON.stringify({
-    url: payload.pageContext.url,
-    targetLanguage: settings.targetLanguage,
-    segmentIds: payload.segments.map((segment) => segment.id)
-  });
 }
 
 function buildRequestId(prefix: string): string {
@@ -53,159 +36,110 @@ async function sendContentMessage<T>(tabId: number, message: RuntimeMessage): Pr
   return chrome.tabs.sendMessage(tabId, message) as Promise<T | undefined>;
 }
 
-async function translatePage(tabId: number, displayMode: DisplayMode): Promise<{ ok: boolean; message: string }> {
+async function translatePageStream(tabId: number, displayMode: DisplayMode): Promise<{ ok: boolean; message: string }> {
   const settings = await getSettings();
   const startedAt = Date.now();
   const payload = await requestContentPayload<ContentPagePayload>(tabId, 'collect-page-payload');
   if (!payload || payload.segments.length === 0) {
-    warnWorker('page translation skipped: no payload', { tabId, displayMode });
-    return { ok: false, message: 'No translatable page text was found. This extension is biased toward document-style pages.' };
+    warnWorker('page stream translation skipped: no payload', { tabId, displayMode });
+    return { ok: false, message: 'No translatable page text was found.' };
   }
 
-  logWorker('page translation start', {
+  const requestId = buildRequestId('page-stream');
+  logWorker('page stream translation start', {
     tabId,
     displayMode,
-    url: payload.pageContext.url,
-    segmentCount: payload.segments.length,
-    charCount: payload.segments.reduce((sum, segment) => sum + segment.text.length, 0)
+    requestId,
+    segmentCount: payload.segments.length
   });
 
-  const cacheKey = translationCacheKey(payload, settings);
-  const cached = cachedTranslations.get(tabId);
-  let response: TranslationResponse | undefined = cached?.cacheKey === cacheKey ? cached.response : undefined;
+  const style = {
+    translatedFontFamily: settings.translatedFontFamily,
+    translatedTextColor: settings.translatedTextColor
+  };
 
-  if (!response) {
-    const totalChars = payload.segments.reduce((sum, segment) => sum + segment.text.length, 0);
-    const batchCharLimit = resolvePageBatchCharLimit(totalChars, payload.segments.length);
-    const batches = batchSegments(payload.segments, batchCharLimit);
-    const translatedItems: TranslationResponse['translations'] = [];
-    const warnings: string[] = [];
-    let durationMs = 0;
+  let durationMs = 0;
+  let firstError: { code: string; message: string } | undefined;
 
-    logWorker('page translation cache miss', {
-      tabId,
-      batchCount: batches.length,
-      batchCharLimit,
-      totalChars,
-      targetLanguage: settings.targetLanguage
-    });
+  await sendContentMessage(tabId, {
+    type: 'prepare-page-stream'
+  });
 
-    for (const [index, batch] of batches.entries()) {
-      const batchRequestId = buildRequestId('page');
-      logWorker('page batch start', {
-        tabId,
-        batchIndex: index + 1,
-        batchCount: batches.length,
-        requestId: batchRequestId,
-        segmentCount: batch.segments.length,
-        charCount: batch.charCount
-      });
-      const result = await translateWithBridge(
-        {
-          requestId: batchRequestId,
-          mode: 'page',
-          displayMode,
-          sourceLang: undefined,
-          targetLang: settings.targetLanguage,
-          pageContext: payload.pageContext,
-          segments: batch.segments
-        },
-        settings
-      );
-
-      if (!result.ok || !result.response) {
-        warnWorker('page batch failed', {
-          tabId,
-          batchIndex: index + 1,
-          batchCount: batches.length,
-          requestId: batchRequestId,
-          errorCode: result.error?.code,
-          errorMessage: result.error?.message
-        });
-        return { ok: false, message: result.error?.details ? `${result.error.message} ${result.error.details}` : result.error?.message ?? 'Translation failed.' };
-      }
-
-      translatedItems.push(...result.response.translations);
-      warnings.push(...result.response.warnings);
-      durationMs += result.response.usage.durationMs;
-
-      await sendContentMessage(tabId, {
-        type: 'apply-page-translation',
-        displayMode,
-        response: result.response,
-        style: {
-          translatedFontFamily: settings.translatedFontFamily,
-          translatedTextColor: settings.translatedTextColor
-        },
-        reset: index === 0
-      });
-
-      logWorker('page batch success', {
-        tabId,
-        batchIndex: index + 1,
-        batchCount: batches.length,
-        requestId: batchRequestId,
-        translatedCount: result.response.translations.length,
-        providerDurationMs: result.response.usage.durationMs,
-        warnings: result.response.warnings.length
-      });
-    }
-
-    response = {
-      requestId: buildRequestId('page-merged'),
-      translations: translatedItems,
-      warnings,
-      usage: summarizeUsage(payload.segments, durationMs)
-    };
-
-    cachedTranslations.set(tabId, { cacheKey, response });
-  } else {
-    logWorker('page translation cache hit', {
-      tabId,
-      requestId: response.requestId,
-      translatedCount: response.translations.length
-    });
-
-    await sendContentMessage(tabId, {
-      type: 'apply-page-translation',
+  const result = await translateWithBridgeStream(
+    {
+      requestId,
+      mode: 'page',
       displayMode,
-      response,
-      style: {
-        translatedFontFamily: settings.translatedFontFamily,
-        translatedTextColor: settings.translatedTextColor
+      sourceLang: undefined,
+      targetLang: settings.targetLanguage,
+      pageContext: payload.pageContext,
+      segments: payload.segments
+    },
+    settings,
+    {
+      onFragment: async (fragment: StreamFragment) => {
+        await sendContentMessage(tabId, {
+          type: 'stream-fragment',
+          requestId: fragment.requestId,
+          segmentId: fragment.segmentId,
+          text: fragment.text,
+          done: fragment.done,
+          isLast: fragment.isLast,
+          displayMode,
+          style
+        } satisfies RuntimeMessage);
       },
-      reset: true
-    });
+      onError: async (code, message) => {
+        warnWorker('page stream error', { code, message });
+        firstError ??= { code, message };
+      },
+      onDone: (ms) => {
+        durationMs = ms;
+      }
+    }
+  );
+
+  if (!result.ok) {
+    return {
+      ok: false,
+      message: result.error?.details ? `${result.error.message} ${result.error.details}` : result.error?.message ?? firstError?.message ?? 'Page translation failed.'
+    };
   }
 
-  logWorker('page translation applied', {
+  logWorker('page stream translation done', {
     tabId,
-    displayMode,
-    requestId: response.requestId,
-    translatedCount: response.translations.length,
+    requestId,
     durationMs: Date.now() - startedAt
   });
-  return { ok: true, message: `Applied ${displayMode} translation to ${response.translations.length} blocks.` };
+  return { ok: true, message: `Stream translation completed in ${durationMs}ms.` };
 }
 
-async function translateSelection(tabId: number, payload?: ContentSelectionPayload): Promise<{ ok: boolean; message: string }> {
+async function translateSelectionStream(tabId: number, payload?: ContentSelectionPayload): Promise<{ ok: boolean; message: string }> {
   const settings = await getSettings();
-  const startedAt = Date.now();
   const resolvedPayload = payload ?? (await requestContentPayload<ContentSelectionPayload>(tabId, 'collect-selection-payload'));
   if (!resolvedPayload || resolvedPayload.segments.length === 0) {
-    warnWorker('selection translation skipped: no payload', { tabId });
+    warnWorker('selection stream skipped: no payload', { tabId });
     return { ok: false, message: 'No selected text found.' };
   }
 
-  const requestId = buildRequestId('selection');
-  logWorker('selection translation start', {
-    tabId,
-    requestId,
-    url: resolvedPayload.pageContext.url,
-    charCount: resolvedPayload.segments.reduce((sum, segment) => sum + segment.text.length, 0)
-  });
+  const requestId = buildRequestId('selection-stream');
+  const style = {
+    translatedFontFamily: settings.translatedFontFamily,
+    translatedTextColor: settings.translatedTextColor
+  };
 
-  const result = await translateWithBridge(
+  await sendContentMessage(tabId, {
+    type: 'stream-selection',
+    requestId,
+    segmentId: resolvedPayload.segments[0]!.id,
+    text: '',
+    done: false,
+    isLast: true,
+    anchorRect: resolvedPayload.anchorRect,
+    style
+  } satisfies RuntimeMessage);
+
+  await translateWithBridgeStream(
     {
       requestId,
       mode: 'selection',
@@ -215,49 +149,43 @@ async function translateSelection(tabId: number, payload?: ContentSelectionPaylo
       pageContext: resolvedPayload.pageContext,
       segments: resolvedPayload.segments
     },
-    settings
+    settings,
+    {
+      onFragment: async (fragment: StreamFragment) => {
+        await sendContentMessage(tabId, {
+          type: 'stream-selection',
+          requestId: fragment.requestId,
+          segmentId: fragment.segmentId,
+          text: fragment.text,
+          done: fragment.done,
+          isLast: fragment.isLast,
+          anchorRect: resolvedPayload.anchorRect,
+          style
+        } satisfies RuntimeMessage);
+      },
+      onError: async (code, message) => {
+        await sendContentMessage(tabId, {
+          type: 'stream-selection-error',
+          requestId,
+          message,
+          code,
+          anchorRect: resolvedPayload.anchorRect
+        } satisfies RuntimeMessage);
+      },
+      onDone: async (ms) => {
+        await sendContentMessage(tabId, {
+          type: 'stream-selection-done',
+          requestId
+        } satisfies RuntimeMessage);
+        logWorker('selection stream done', { tabId, requestId, durationMs: ms });
+      }
+    }
   );
 
-  if (!result.ok || !result.response) {
-    const message = result.error?.details ? `${result.error.message} ${result.error.details}` : result.error?.message ?? 'Selection translation failed.';
-    warnWorker('selection translation failed', {
-      tabId,
-      requestId,
-      errorCode: result.error?.code,
-      errorMessage: result.error?.message,
-      durationMs: Date.now() - startedAt
-    });
-    const errorMessage: RuntimeMessage = {
-      type: 'show-selection-error',
-      message,
-      ...(result.error?.code ? { code: result.error.code } : {}),
-      ...(resolvedPayload.anchorRect ? { anchorRect: resolvedPayload.anchorRect } : {})
-    };
-    await sendContentMessage(tabId, errorMessage);
-    return { ok: false, message };
-  }
-
-  await sendContentMessage(tabId, {
-    type: 'show-selection-result',
-    response: result.response,
-    anchorRect: resolvedPayload.anchorRect,
-    style: {
-      translatedFontFamily: settings.translatedFontFamily,
-      translatedTextColor: settings.translatedTextColor
-    }
-  });
-  logWorker('selection translation success', {
-    tabId,
-    requestId,
-    translatedCount: result.response.translations.length,
-    providerDurationMs: result.response.usage.durationMs,
-    durationMs: Date.now() - startedAt
-  });
-  return { ok: true, message: 'Selection translated.' };
+  return { ok: true, message: 'Selection stream translation completed.' };
 }
 
 async function revertPage(tabId: number): Promise<{ ok: boolean; message: string }> {
-  cachedTranslations.delete(tabId);
   await sendContentMessage(tabId, { type: 'revert-page-render' });
   return { ok: true, message: 'Page translation reverted.' };
 }
@@ -289,11 +217,11 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   }
 
   if (info.menuItemId === 'translate-selection') {
-    void translateSelection(tabId);
+    void translateSelectionStream(tabId);
   } else if (info.menuItemId === 'translate-page-bilingual') {
-    void translatePage(tabId, 'bilingual');
+    void translatePageStream(tabId, 'bilingual');
   } else if (info.menuItemId === 'translate-page-translated-only') {
-    void translatePage(tabId, 'translated-only');
+    void translatePageStream(tabId, 'translated-only');
   }
 });
 
@@ -316,7 +244,7 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
       sendResponse({ ok: false, message: 'No sender tab found.' });
       return true;
     }
-    void translateSelection(tabId, message.payload).then(
+    void translateSelectionStream(tabId, message.payload).then(
       sendResponse,
       (error) => sendResponse({ ok: false, message: error instanceof Error ? error.message : 'Selection translation failed.' })
     );
@@ -324,7 +252,7 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
   }
 
   if (message.type === 'translate-page') {
-    void withActiveTab(message.tabId, async (resolvedTabId) => translatePage(resolvedTabId, message.displayMode)).then(
+    void withActiveTab(message.tabId, async (resolvedTabId) => translatePageStream(resolvedTabId, message.displayMode)).then(
       sendResponse,
       (error) => sendResponse({ ok: false, message: error instanceof Error ? error.message : 'Page translation failed.' })
     );
@@ -332,7 +260,7 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
   }
 
   if (message.type === 'translate-selection') {
-    void withActiveTab(message.tabId, async (resolvedTabId) => translateSelection(resolvedTabId)).then(
+    void withActiveTab(message.tabId, async (resolvedTabId) => translateSelectionStream(resolvedTabId)).then(
       sendResponse,
       (error) => sendResponse({ ok: false, message: error instanceof Error ? error.message : 'Selection translation failed.' })
     );

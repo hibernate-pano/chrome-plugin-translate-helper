@@ -154,3 +154,16 @@ export function summarizeUsage(segments: Segment[], durationMs: number): Transla
     durationMs
   };
 }
+
+export interface StreamFragment {
+  requestId: string;
+  segmentId: string;
+  text: string;
+  done: boolean;
+  isLast: boolean;
+}
+
+export type StreamEvent =
+  | { type: 'fragment'; data: StreamFragment }
+  | { type: 'error'; data: TranslationError }
+  | { type: 'done'; data: TranslationUsage };

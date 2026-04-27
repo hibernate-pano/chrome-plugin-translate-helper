@@ -7,6 +7,7 @@ const ROOT_ID = 'translate-helper-root-style';
 const TRANSLATED_CLASS = 'translate-helper-translated';
 const BILINGUAL_CLASS = 'translate-helper-bilingual';
 const APPLIED_ATTR = 'data-translate-helper-applied';
+const SEGMENT_ID_ATTR = 'data-translate-helper-segment-id';
 
 interface BlockSnapshot {
   element: HTMLElement;
@@ -15,6 +16,7 @@ interface BlockSnapshot {
 }
 
 const snapshots = new Map<string, BlockSnapshot>();
+const segmentRegistry = new Map<string, HTMLElement>();
 
 function ensureStyles(): void {
   if (document.getElementById(ROOT_ID)) {
@@ -66,6 +68,24 @@ export function revertPageTranslation(): void {
   for (const [segmentId, snapshot] of snapshots) {
     restoreBlock(snapshot);
     snapshots.delete(segmentId);
+  }
+  segmentRegistry.clear();
+}
+
+export function clearSegmentRegistry(): void {
+  segmentRegistry.clear();
+}
+
+export function registerPageBlocks(blocks: PageBlock[], options: { reset?: boolean } = {}): void {
+  if (options.reset) {
+    revertPageTranslation();
+  } else {
+    clearSegmentRegistry();
+  }
+
+  for (const block of blocks) {
+    block.element.setAttribute(SEGMENT_ID_ATTR, block.segment.id);
+    segmentRegistry.set(block.segment.id, block.element);
   }
 }
 
@@ -119,9 +139,84 @@ export function applyPageTranslation(
     }
 
     block.element.setAttribute(APPLIED_ATTR, displayMode);
+    block.element.setAttribute(SEGMENT_ID_ATTR, block.segment.id);
     snapshots.set(block.segment.id, snapshot);
+    segmentRegistry.set(block.segment.id, block.element);
     appliedCount += 1;
   }
 
   return { appliedCount, missingCount };
+}
+
+export function applyFragment(
+  segmentId: string,
+  text: string,
+  done: boolean,
+  _isLast: boolean,
+  displayMode: DisplayMode,
+  style: TranslatedTextStyle,
+  reset?: boolean
+): void {
+  ensureStyles();
+  applyStyleVariables(style);
+
+  if (reset) {
+    revertPageTranslation();
+  }
+
+  const blockElement = segmentRegistry.get(segmentId);
+  if (!blockElement) {
+    const el = document.querySelector(`[${SEGMENT_ID_ATTR}="${segmentId}"]`) as HTMLElement | null;
+    if (el) {
+      segmentRegistry.set(segmentId, el);
+    } else {
+      return;
+    }
+  }
+
+  const targetElement = segmentRegistry.get(segmentId)!;
+  let snapshot = snapshots.get(segmentId);
+
+  if (!snapshot) {
+    snapshot = {
+      element: targetElement,
+      originalHtml: targetElement.innerHTML
+    };
+    snapshots.set(segmentId, snapshot);
+  }
+
+  if (done) {
+    restoreBlock(snapshot);
+    if (displayMode === 'translated-only') {
+      targetElement.textContent = text;
+      targetElement.classList.add(TRANSLATED_CLASS);
+    } else {
+      if (snapshot.insertedNode && snapshot.insertedNode.parentNode) {
+        snapshot.insertedNode.textContent = text;
+      } else {
+        const translatedNode = document.createElement('div');
+        translatedNode.className = BILINGUAL_CLASS;
+        translatedNode.textContent = text;
+        targetElement.after(translatedNode);
+        snapshot.insertedNode = translatedNode;
+      }
+    }
+    targetElement.setAttribute(APPLIED_ATTR, displayMode);
+    targetElement.setAttribute(SEGMENT_ID_ATTR, segmentId);
+  } else {
+    if (displayMode === 'translated-only') {
+      targetElement.textContent = text;
+      targetElement.classList.add(TRANSLATED_CLASS);
+    } else {
+      if (!snapshot.insertedNode) {
+        const translatedNode = document.createElement('div');
+        translatedNode.className = BILINGUAL_CLASS;
+        translatedNode.textContent = text;
+        targetElement.after(translatedNode);
+        snapshot.insertedNode = translatedNode;
+      } else {
+        snapshot.insertedNode.textContent = text;
+      }
+    }
+  }
 }

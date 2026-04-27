@@ -5,7 +5,9 @@ import {
   validateTranslationRequest,
   type BridgeHealth,
   type PairingResponse,
-  type TranslationResponse
+  type TranslationResponse,
+  type StreamFragment,
+  type TranslationErrorCode
 } from '../../../packages/shared-protocol/src/index';
 
 import type { BridgeController } from './types';
@@ -134,18 +136,64 @@ export class BridgeHttpServer {
         return this.respondJson(response, 200, await this.controller.translate(payload), request.headers.origin, requestId, startedAt, route);
       }
 
+      if (request.method === 'POST' && request.url === '/translate/stream') {
+        this.assertAllowedOrigin(request);
+        await this.assertAuthorized(request);
+        const payload = validateTranslationRequest(await this.readJsonBody(request));
+        return this.handleStreamRequest(request, response, requestId, payload);
+      }
+
       return this.respondJson(
         response,
         404,
         createErrorResponse('unknown', createError('invalid_request', 'Unknown bridge endpoint.', false)),
         request.headers.origin,
         requestId,
-        startedAt,
-        route
+        startedAt, route
       );
     } catch (error) {
       return this.handleError(error, request, response, requestId, startedAt, route);
     }
+  }
+
+  private async handleStreamRequest(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+    requestId: string,
+    payload: ReturnType<typeof validateTranslationRequest>
+  ): Promise<void> {
+    const origin = request.headers.origin;
+    const isAllowedOrigin = origin?.startsWith('chrome-extension://');
+
+    response.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Request-Id': requestId,
+      ...(isAllowedOrigin ? { 'Access-Control-Allow-Origin': origin, 'Vary': 'Origin' } : {})
+    });
+
+    const sendEvent = (eventType: string, data: unknown): void => {
+      response.write(`event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    let durationMs = 0;
+    await this.controller.translateStream(
+      payload,
+      (fragment: StreamFragment) => {
+        sendEvent('fragment', fragment);
+      },
+      (code: TranslationErrorCode, message: string) => {
+        sendEvent('error', createError(code, message, false));
+      },
+      (ms: number) => {
+        durationMs = ms;
+      }
+    );
+
+    sendEvent('done', { durationMs });
+    response.end();
+    this.logger.info(`[bridge] request=${requestId} route="POST /translate/stream" status=200 durationMs=${durationMs}`);
   }
 
   private assertAllowedOrigin(request: http.IncomingMessage): void {

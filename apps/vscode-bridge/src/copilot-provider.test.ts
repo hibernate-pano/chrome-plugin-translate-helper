@@ -94,4 +94,65 @@ describe('CopilotTranslationProvider', () => {
     expect(response.warnings.some((warning) => warning.includes('timed out'))).toBe(true);
     expect(sendTextRequest).toHaveBeenCalledTimes(4);
   });
+
+  it('finalizes stream fragments with the latest parsed text', async () => {
+    const { CopilotTranslationProvider } = await import('./copilot-provider');
+
+    const request: TranslationRequest = {
+      requestId: 'req-stream',
+      mode: 'page',
+      displayMode: 'bilingual',
+      targetLang: 'zh-CN',
+      pageContext: {
+        url: 'https://example.test/doc',
+        title: 'Doc'
+      },
+      segments: [
+        { id: 'a', text: 'Alpha', blockType: 'paragraph' },
+        { id: 'b', text: 'Beta', blockType: 'paragraph' }
+      ]
+    };
+
+    const sendRequest = vi.fn().mockResolvedValue({
+      text: (async function* () {
+        yield '[{"id":"a","text":"甲"},{"id":"b","text":"乙"}]';
+      })()
+    });
+
+    mockSelectChatModels.mockResolvedValue([
+      {
+        family: 'gpt-5-mini',
+        sendRequest
+      }
+    ]);
+
+    const provider = new CopilotTranslationProvider({
+      requestTimeoutMs: 10,
+      pageBatchCharLimit: 2400,
+      logger: {
+        info: () => undefined,
+        warn: () => undefined,
+        error: () => undefined
+      }
+    });
+
+    const fragments: Array<{ segmentId: string; text: string; done: boolean; isLast: boolean }> = [];
+    await provider.translateStream(
+      request,
+      (fragment) => {
+        fragments.push({
+          segmentId: fragment.segmentId,
+          text: fragment.text,
+          done: fragment.done,
+          isLast: fragment.isLast
+        });
+      },
+      () => undefined,
+      () => undefined
+    );
+
+    expect(fragments).toContainEqual({ segmentId: 'a', text: '甲', done: true, isLast: false });
+    expect(fragments).toContainEqual({ segmentId: 'b', text: '乙', done: true, isLast: false });
+    expect(fragments.find((fragment) => fragment.segmentId === 'a' && fragment.done)?.text).toBe('甲');
+  });
 });

@@ -1,4 +1,4 @@
-import type { TranslationRequest, TranslationResponse } from '../../../packages/shared-protocol/src/index';
+import type { TranslationRequest, TranslationResponse, StreamFragment, TranslationErrorCode } from '../../../packages/shared-protocol/src/index';
 
 import type { ProviderHealth, TranslationProvider } from './types';
 import { batchSegments, createSuccessResponse } from './translate-utils';
@@ -42,5 +42,33 @@ export class FakeTranslationProvider implements TranslationProvider {
     }
 
     return createSuccessResponse(request, translations, Date.now() - start, warnings);
+  }
+
+  async translateStream(
+    request: TranslationRequest,
+    onFragment: (fragment: StreamFragment) => void,
+    onError: (code: TranslationErrorCode, message: string) => void,
+    onDone: (durationMs: number) => void
+  ): Promise<void> {
+    const start = Date.now();
+    const batches = request.mode === 'page'
+      ? batchSegments(request.segments, this.pageBatchCharLimit)
+      : [{ segments: request.segments, charCount: request.segments.reduce((sum, segment) => sum + segment.text.length, 0) }];
+
+    let globalIndex = 0;
+    for (const batch of batches) {
+      for (const seg of batch.segments) {
+        const translated = `[${request.targetLang}] ${seg.text}`;
+        onFragment({
+          requestId: request.requestId,
+          segmentId: seg.id,
+          text: translated,
+          done: true,
+          isLast: globalIndex === request.segments.length - 1
+        });
+        globalIndex++;
+      }
+    }
+    onDone(Date.now() - start);
   }
 }

@@ -3,7 +3,9 @@ import {
   type BridgeHealth,
   type PairingResponse,
   type TranslationRequest,
-  type TranslationResponse
+  type TranslationResponse,
+  type StreamFragment,
+  type TranslationErrorCode
 } from '../../../packages/shared-protocol/src/index';
 
 import type { BridgeController, PairingTokenStore, TranslationProvider } from './types';
@@ -58,6 +60,25 @@ export class DefaultBridgeController implements BridgeController {
   async verifyToken(token: string | undefined): Promise<boolean> {
     const expected = await this.tokenStore.getToken();
     return Boolean(expected && token && expected === token);
+  }
+
+  async translateStream(
+    request: TranslationRequest,
+    onFragment: (fragment: StreamFragment) => void,
+    onError: (code: TranslationErrorCode, message: string) => void,
+    onDone: (durationMs: number) => void
+  ): Promise<void> {
+    try {
+      await this.provider.translateStream(request, onFragment, onError, onDone);
+    } catch (error) {
+      if (error instanceof BridgeError) {
+        onError(error.code, error.message);
+      } else if (error instanceof Error) {
+        onError('provider_error', error.message);
+      } else {
+        onError('provider_error', 'Unknown translation failure.');
+      }
+    }
   }
 
   async translate(request: TranslationRequest): Promise<TranslationResponse> {

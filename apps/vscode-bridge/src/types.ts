@@ -1,6 +1,7 @@
 import type {
   BridgeHealth,
   PairingResponse,
+  StreamFragment,
   TranslationErrorCode,
   TranslationRequest,
   TranslationResponse
@@ -25,6 +26,12 @@ export interface TranslationProvider {
   getHealth(): Promise<ProviderHealth>;
   ensureInteractiveAccess?(): Promise<ProviderHealth>;
   translate(request: TranslationRequest): Promise<TranslationResponse>;
+  translateStream(
+    request: TranslationRequest,
+    onFragment: (fragment: StreamFragment) => void,
+    onError: (error: TranslationErrorCode, message: string) => void,
+    onDone: (durationMs: number) => void
+  ): Promise<void>;
 }
 
 export interface PairingTokenStore {
@@ -38,6 +45,12 @@ export interface BridgeController {
   pair(): Promise<PairingResponse>;
   verifyToken(token: string | undefined): Promise<boolean>;
   translate(request: TranslationRequest): Promise<TranslationResponse>;
+  translateStream(
+    request: TranslationRequest,
+    onFragment: (fragment: StreamFragment) => void,
+    onError: (error: TranslationErrorCode, message: string) => void,
+    onDone: (durationMs: number) => void
+  ): Promise<void>;
 }
 
 export class BridgeError extends Error {

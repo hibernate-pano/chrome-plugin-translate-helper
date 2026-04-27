@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { TranslationResponse } from '@translate-helper/shared-protocol';
 
-import { applyPageTranslation, revertPageTranslation } from './page-renderer';
+import { applyFragment, applyPageTranslation, registerPageBlocks, revertPageTranslation } from './page-renderer';
 import type { PageBlock } from './document-extractor';
 
 const style = {
@@ -99,5 +99,30 @@ describe('page renderer', () => {
     expect(translatedNodes).toEqual(['第一段翻译', '第二段翻译']);
     expect(document.getElementById('first')?.textContent).toBe('First paragraph');
     expect(document.getElementById('second')?.textContent).toBe('Second paragraph');
+  });
+
+  it('renders streamed fragments after registering page blocks', () => {
+    document.body.innerHTML = '<p id="first">First paragraph</p><p id="second">Second paragraph</p>';
+    const blocks: PageBlock[] = [
+      {
+        segment: { id: 'seg-1', text: 'First paragraph', blockType: 'paragraph' },
+        element: document.getElementById('first') as HTMLElement
+      },
+      {
+        segment: { id: 'seg-2', text: 'Second paragraph', blockType: 'paragraph' },
+        element: document.getElementById('second') as HTMLElement
+      }
+    ];
+
+    registerPageBlocks(blocks, { reset: true });
+
+    applyFragment('seg-1', '第一段', false, false, 'bilingual', style);
+    expect(document.body.textContent).toContain('第一段');
+
+    applyFragment('seg-1', '第一段完成', true, false, 'bilingual', style);
+    applyFragment('seg-2', '第二段完成', true, true, 'bilingual', style);
+
+    const translatedNodes = Array.from(document.querySelectorAll('.translate-helper-bilingual')).map((node) => node.textContent);
+    expect(translatedNodes).toEqual(['第一段完成', '第二段完成']);
   });
 });

@@ -76,4 +76,39 @@ export type RuntimeMessage =
     }
   | {
       type: 'revert-page-render';
+    }
+  | {
+      type: 'prepare-page-stream';
+    }
+  | {
+      type: 'stream-fragment';
+      requestId: string;
+      segmentId: string;
+      text: string;
+      done: boolean;
+      isLast: boolean;
+      displayMode: DisplayMode;
+      style: TranslatedTextStyle;
+      reset?: boolean;
+    }
+  | {
+      type: 'stream-selection';
+      requestId: string;
+      segmentId: string;
+      text: string;
+      done: boolean;
+      isLast: boolean;
+      anchorRect?: ContentSelectionPayload['anchorRect'];
+      style: TranslatedTextStyle;
+    }
+  | {
+      type: 'stream-selection-done';
+      requestId: string;
+    }
+  | {
+      type: 'stream-selection-error';
+      requestId: string;
+      message: string;
+      code?: string;
+      anchorRect?: ContentSelectionPayload['anchorRect'];
     };
