@@ -47,7 +47,7 @@ class BridgeExtensionRuntime implements vscode.Disposable {
     }
 
     const config = getBridgeConfig();
-    const provider = createProvider(config);
+    const provider = createProvider(config, this.logger);
     const controller = new DefaultBridgeController(provider, this.tokenStore, String(this.context.extension.packageJSON.version ?? '0.1.0'));
     const server = new BridgeHttpServer(controller, config.port, this.logger);
     const address = await server.start();
@@ -105,7 +105,7 @@ class BridgeExtensionRuntime implements vscode.Disposable {
       return;
     }
 
-    const provider = this.provider ?? createProvider(config);
+    const provider = this.provider ?? createProvider(config, this.logger);
     if (!provider.ensureInteractiveAccess) {
       vscode.window.showWarningMessage('Current provider does not support interactive enablement.');
       return;
@@ -135,7 +135,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
 export async function deactivate(): Promise<void> {}
 
-function createProvider(config: BridgeConfig): TranslationProvider {
+function createProvider(config: BridgeConfig, logger: BridgeServerLogger): TranslationProvider {
   if (config.provider === 'fake') {
     return new FakeTranslationProvider(config.pageBatchCharLimit);
   }
