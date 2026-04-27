@@ -1,0 +1,51 @@
+{
+  "name": "translate-helper-vscode-bridge",
+  "displayName": "Translate Helper Bridge",
+  "version": "0.1.0",
+  "publisher": "internal",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:translateHelper.startBridge",
+    "onCommand:translateHelper.stopBridge",
+    "onCommand:translateHelper.showBridgeHealth",
+    "onCommand:translateHelper.copyPairingToken",
+    "onCommand:translateHelper.enableCopilotAccess"
+  ],
+  "extensionKind": [
+    "ui"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "translateHelper.startBridge",
+        "title": "Translate Helper: Start Bridge"
+      },
+      {
+        "command": "translateHelper.stopBridge",
+        "title": "Translate Helper: Stop Bridge"
+      },
+      {
+        "command": "translateHelper.showBridgeHealth",
+        "title": "Translate Helper: Show Bridge Health"
+      },
+      {
+        "command": "translateHelper.copyPairingToken",
+        "title": "Translate Helper: Copy Pairing Token"
+      },
+      {
+        "command": "translateHelper.enableCopilotAccess",
+        "title": "Translate Helper: Enable Copilot Access"
+      }
+    ]
+  },
+  "dependencies": {
+    "@translate-helper/shared-protocol": "workspace:*"
+  }
+}

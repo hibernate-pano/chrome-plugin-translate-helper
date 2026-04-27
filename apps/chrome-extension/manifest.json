@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Translate Helper",
+  "description": "Copilot bridge-powered page and selection translation for document-style pages.",
+  "version": "0.1.0",
+  "action": {
+    "default_title": "Translate Helper",
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html",
+  "background": {
+    "service_worker": "dist/service-worker.js",
+    "type": "module"
+  },
+  "permissions": [
+    "activeTab",
+    "contextMenus",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:43189/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "dist/content-script.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

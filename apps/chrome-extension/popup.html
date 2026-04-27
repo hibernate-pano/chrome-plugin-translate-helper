@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Translate Helper</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+        background: #f4f1ea;
+        color: #1d1d1b;
+      }
+
+      body {
+        margin: 0;
+        width: 360px;
+        background:
+          radial-gradient(circle at top left, rgba(193, 167, 122, 0.25), transparent 34%),
+          linear-gradient(180deg, #f6f1e8 0%, #ede4d5 100%);
+      }
+
+      .panel {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 16px;
+      }
+
+      .card {
+        border: 1px solid rgba(86, 68, 44, 0.14);
+        border-radius: 14px;
+        background: rgba(255, 252, 247, 0.88);
+        box-shadow: 0 12px 28px rgba(72, 49, 17, 0.08);
+        padding: 14px;
+      }
+
+      h1,
+      h2,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: 16px;
+        font-weight: 700;
+      }
+
+      .subtle {
+        color: #61513a;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .status {
+        margin-top: 8px;
+        border-radius: 10px;
+        padding: 10px 12px;
+        font-size: 12px;
+        line-height: 1.45;
+        background: #f7efe1;
+        color: #5d4d38;
+      }
+
+      .status[data-tone="error"] {
+        background: #fdeaea;
+        color: #8a2d2d;
+      }
+
+      .status[data-tone="success"] {
+        background: #eaf7ef;
+        color: #1e6a40;
+      }
+
+      .controls {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      button,
+      a.button-link {
+        appearance: none;
+        border: 0;
+        border-radius: 11px;
+        padding: 11px 12px;
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+        text-align: center;
+        text-decoration: none;
+      }
+
+      button.primary {
+        background: #2f5e78;
+        color: #fff;
+      }
+
+      button.secondary,
+      a.button-link {
+        background: #e8dcc8;
+        color: #3b3227;
+      }
+
+      button.ghost {
+        background: #f5eee1;
+        color: #4a3b2a;
+      }
+
+      button:disabled {
+        opacity: 0.55;
+        cursor: default;
+      }
+
+      .footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .meta {
+        font-size: 12px;
+        color: #6c5d46;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="panel">
+      <section class="card">
+        <h1>Translate Helper</h1>
+        <p class="subtle">Built for document-style pages with a local VS Code bridge.</p>
+        <div id="bridge-status" class="status" data-tone="neutral">Checking bridge…</div>
+      </section>
+
+      <section class="card">
+        <h2 style="font-size: 13px; margin-bottom: 10px;">Whole Page</h2>
+        <div class="controls">
+          <button id="translate-translated-only" class="primary">Translated only</button>
+          <button id="translate-bilingual" class="secondary">Bilingual</button>
+          <button id="revert-page" class="ghost">Revert page</button>
+          <button id="translate-selection" class="ghost">Translate selection</button>
+        </div>
+      </section>
+
+      <section class="card footer">
+        <div class="meta" id="settings-summary">Target: zh-CN</div>
+        <a class="button-link" href="options.html" target="_blank" rel="noreferrer">Options</a>
+      </section>
+    </main>
+
+    <script type="module" src="./popup.js"></script>
+  </body>
+</html>

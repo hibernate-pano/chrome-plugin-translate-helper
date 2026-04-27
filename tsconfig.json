@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/shared-protocol" },
+    { "path": "./packages/text-segmentation" },
+    { "path": "./apps/vscode-bridge" },
+    { "path": "./apps/chrome-extension" }
+  ]
+}

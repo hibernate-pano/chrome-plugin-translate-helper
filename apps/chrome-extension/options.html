@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Translate Helper Options</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Iowan Old Style", "Noto Serif SC", Georgia, serif;
+        background: #f3ede3;
+        color: #1f1b17;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(243, 237, 227, 0.95)),
+          radial-gradient(circle at right top, rgba(64, 104, 131, 0.12), transparent 30%);
+      }
+
+      main {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 48px 24px 64px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 34px;
+      }
+
+      p {
+        margin: 0;
+      }
+
+      .lead {
+        max-width: 580px;
+        color: #5d5242;
+        line-height: 1.6;
+      }
+
+      form {
+        margin-top: 28px;
+        padding: 24px;
+        border-radius: 20px;
+        background: rgba(255, 251, 245, 0.9);
+        border: 1px solid rgba(76, 57, 34, 0.12);
+        box-shadow: 0 18px 40px rgba(63, 44, 18, 0.08);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 18px;
+      }
+
+      label {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        font-size: 14px;
+      }
+
+      input,
+      select {
+        border-radius: 12px;
+        border: 1px solid #d8c7ae;
+        background: #fffdfa;
+        padding: 11px 12px;
+        font: inherit;
+        color: inherit;
+      }
+
+      .actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-top: 22px;
+      }
+
+      button {
+        appearance: none;
+        border: 0;
+        border-radius: 12px;
+        background: #355f78;
+        color: #fff;
+        padding: 12px 16px;
+        font: inherit;
+        cursor: pointer;
+      }
+
+      #save-status {
+        color: #5b4e3d;
+        font-size: 14px;
+      }
+
+      .preview {
+        margin-top: 24px;
+        padding: 18px;
+        border-radius: 16px;
+        background: #fffdfa;
+        border: 1px dashed rgba(76, 57, 34, 0.18);
+      }
+
+      .preview-label {
+        margin-bottom: 10px;
+        font-size: 13px;
+        color: #6a5944;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Translate Helper Options</h1>
+      <p class="lead">
+        Configure the local bridge address, pairing token, target language, and how translated text should appear on document-style pages.
+      </p>
+
+      <form id="options-form">
+        <div class="grid">
+          <label>
+            Bridge URL
+            <input id="bridge-url" name="bridgeUrl" type="url" placeholder="http://127.0.0.1:43189" />
+          </label>
+          <label>
+            Pairing token
+            <input id="pairing-token" name="pairingToken" type="password" placeholder="Paste token from VS Code bridge" />
+          </label>
+          <label>
+            Target language
+            <input id="target-language" name="targetLanguage" type="text" placeholder="zh-CN" />
+          </label>
+          <label>
+            Font family
+            <select id="translated-font-family" name="translatedFontFamily">
+              <option value="Georgia, &quot;Noto Serif SC&quot;, serif">Serif reading</option>
+              <option value="&quot;PingFang SC&quot;, &quot;Microsoft YaHei&quot;, sans-serif">Chinese UI sans</option>
+              <option value="&quot;SF Pro Text&quot;, &quot;PingFang SC&quot;, sans-serif">System sans</option>
+              <option value="&quot;IBM Plex Sans&quot;, &quot;PingFang SC&quot;, sans-serif">IBM Plex Sans</option>
+            </select>
+          </label>
+          <label>
+            Translated text color
+            <input id="translated-text-color" name="translatedTextColor" type="color" />
+          </label>
+        </div>
+
+        <div class="actions">
+          <button type="submit">Save settings</button>
+          <span id="save-status">No unsaved changes.</span>
+        </div>
+
+        <div class="preview">
+          <div class="preview-label">Translated text preview</div>
+          <div id="translated-preview">这是用于文档阅读的翻译样式预览。</div>
+        </div>
+      </form>
+    </main>
+
+    <script type="module" src="./options.js"></script>
+  </body>
+</html>

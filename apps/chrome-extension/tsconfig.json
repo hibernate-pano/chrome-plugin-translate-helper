@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "outDir": "./dist",
+    "lib": ["ES2022", "DOM"],
+    "types": ["chrome"]
+  },
+  "references": [
+    { "path": "../../packages/shared-protocol" },
+    { "path": "../../packages/text-segmentation" }
+  ],
+  "include": ["src/**/*.ts"]
+}

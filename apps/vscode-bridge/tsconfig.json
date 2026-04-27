@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "outDir": "./dist",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["node", "vscode"]
+  },
+  "references": [
+    { "path": "../../packages/shared-protocol" }
+  ],
+  "include": ["src/**/*.ts"]
+}
