@@ -163,6 +163,19 @@ export interface StreamFragment {
   isLast: boolean;
 }
 
+export interface TermEntry {
+  source: string;
+  target: string;
+  context?: string;
+  languages: string;
+  createdAt: number;
+}
+
+export interface TermTable {
+  version: number;
+  terms: TermEntry[];
+}
+
 export type StreamEvent =
   | { type: 'fragment'; data: StreamFragment }
   | { type: 'error'; data: TranslationError }

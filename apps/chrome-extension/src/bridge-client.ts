@@ -10,9 +10,19 @@ import {
 
 import type { BridgeSettings } from './messages';
 import { resolveBridgeRequestTimeoutMs } from './translation-planning';
+import {
+  checkOfflineCache,
+  getOfflineCache,
+  getTermTable,
+  hashRequest,
+  injectTermsPrompt,
+  writeOfflineCache,
+  type OfflineCacheEntry
+} from './settings';
 
 const HEALTH_TIMEOUT_MS = 2500;
 const TRANSLATE_TIMEOUT_MS = 45000;
+const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 export interface BridgeCallResult {
   ok: boolean;
@@ -42,7 +52,7 @@ function headersFromSettings(settings: BridgeSettings): HeadersInit {
 function toOfflineError(): TranslationError {
   return createError(
     'bridge_offline',
-    'Bridge offline. Start the VS Code bridge and verify the 127.0.0.1 URL in Options.',
+    '无法连接到翻译服务。请确保 VS Code 中的 Translate Helper 扩展已启动。',
     true
   );
 }
@@ -51,14 +61,14 @@ function toAuthError(status: number): TranslationError {
   if (status === 401 || status === 403) {
     return createError(
       'invalid_token',
-      'Bridge authentication failed. Refresh the pairing token from VS Code and save it in Options.',
+      '认证失败。请在 VS Code 中重新复制配对 Token，并在扩展设置中更新。',
       false
     );
   }
 
   return createError(
     'auth_required',
-    'Bridge authentication is required before translation can run.',
+    '需要先完成配对。请在 VS Code 中复制配对 Token 并保存到扩展设置中。',
     false
   );
 }
@@ -188,9 +198,46 @@ export async function translateWithBridge(
     };
   }
 
+  // Offline cache check (selection mode only, single segment)
+  if (validatedRequest.mode === 'selection' && validatedRequest.segments.length === 1) {
+    const seg = validatedRequest.segments[0]!;
+    const cacheKey = await hashRequest(seg.text, validatedRequest.targetLang, validatedRequest.displayMode);
+    const offlineCache = await getOfflineCache();
+    const cached = checkOfflineCache(offlineCache, cacheKey);
+    if (cached) {
+      logBridge('info', 'offline cache hit', { cacheKey, charCount: seg.text.length });
+      return {
+        ok: true,
+        response: {
+          requestId: validatedRequest.requestId,
+          translations: [{ id: seg.id, text: cached.translatedText }],
+          usage: { segmentCount: 1, charCount: seg.text.length, durationMs: 0 },
+          warnings: ['[offline-cache]']
+        }
+      };
+    }
+  }
+
   const endpoint = validatedRequest.mode === 'selection' ? '/translate/selection' : '/translate/page';
   const timeoutMs = resolveBridgeRequestTimeoutMs(validatedRequest, TRANSLATE_TIMEOUT_MS);
   const startedAt = Date.now();
+
+  // Inject terminology into segment texts
+  const termTable = await getTermTable();
+  const sourceLang = validatedRequest.sourceLang ?? 'auto';
+  const termsPrompt = injectTermsPrompt(termTable.terms, sourceLang, validatedRequest.targetLang);
+
+  let finalRequest = validatedRequest;
+  if (termsPrompt) {
+    finalRequest = {
+      ...validatedRequest,
+      segments: validatedRequest.segments.map((seg) => ({
+        ...seg,
+        text: termsPrompt + seg.text
+      }))
+    };
+  }
+
   try {
     logBridge('info', 'translation request start', {
       requestId: validatedRequest.requestId,
@@ -199,7 +246,8 @@ export async function translateWithBridge(
       bridgeUrl: settings.bridgeUrl,
       timeoutMs,
       segmentCount: validatedRequest.segments.length,
-      charCount: validatedRequest.segments.reduce((sum, segment) => sum + segment.text.length, 0)
+      charCount: validatedRequest.segments.reduce((sum, segment) => sum + segment.text.length, 0),
+      hasTerms: termsPrompt.length > 0
     });
     const response = await fetchImpl(`${settings.bridgeUrl}${endpoint}`, {
       method: 'POST',
@@ -207,7 +255,7 @@ export async function translateWithBridge(
         ...headersFromSettings(settings),
         'X-Request-Id': validatedRequest.requestId
       },
-      body: JSON.stringify(validatedRequest),
+      body: JSON.stringify(finalRequest),
       signal: withTimeout(timeoutMs)
     });
     logBridge('info', 'translation request response', {
@@ -245,13 +293,6 @@ export async function translateWithBridge(
 
     const parsedError = isRecord(payload.error) ? normalizeErrorPayload(payload.error) : undefined;
     if (parsedError) {
-      logBridge('warn', 'translation response carried error payload', {
-        requestId: validatedRequest.requestId,
-        endpoint,
-        durationMs: Date.now() - startedAt,
-        errorCode: parsedError.code,
-        errorMessage: parsedError.message
-      });
       return { ok: false, error: parsedError };
     }
 
@@ -283,6 +324,24 @@ export async function translateWithBridge(
       warnings: Array.isArray(payload.warnings) ? payload.warnings.filter((warning): warning is string => typeof warning === 'string') : []
     };
 
+    // Write to offline cache (selection mode only, single segment)
+    if (validatedRequest.mode === 'selection' && validatedRequest.segments.length === 1 && translations.length > 0) {
+      const seg = validatedRequest.segments[0]!;
+      const t = translations.find((tr) => tr.id === seg.id);
+      if (t) {
+        const cacheKey = await hashRequest(seg.text, validatedRequest.targetLang, validatedRequest.displayMode);
+        const entry: OfflineCacheEntry = {
+          sourceText: seg.text,
+          translatedText: t.text,
+          targetLang: validatedRequest.targetLang,
+          displayMode: validatedRequest.displayMode,
+          cachedAt: Date.now(),
+          expiresAt: Date.now() + CACHE_TTL_MS
+        };
+        void writeOfflineCache(cacheKey, entry);
+      }
+    }
+
     logBridge('info', 'translation request success', {
       requestId: translatedResponse.requestId,
       endpoint,
@@ -300,7 +359,7 @@ export async function translateWithBridge(
         timeoutMs,
         durationMs: Date.now() - startedAt
       });
-      return { ok: false, error: createError('timeout', 'Bridge request timed out. Try again after VS Code finishes the translation.', true) };
+      return { ok: false, error: createError('timeout', '翻译请求超时。这通常是因为文本太长。请尝试翻译较少的文本。', true) };
     }
     logBridge('error', 'translation request offline', {
       requestId: validatedRequest.requestId,
@@ -342,8 +401,44 @@ export async function translateWithBridgeStream(
     return { ok: false, error: invalidRequestError };
   }
 
+  // Offline cache check (selection mode only, single segment)
+  if (validatedRequest.mode === 'selection' && validatedRequest.segments.length === 1) {
+    const seg = validatedRequest.segments[0]!;
+    const cacheKey = await hashRequest(seg.text, validatedRequest.targetLang, validatedRequest.displayMode);
+    const offlineCache = await getOfflineCache();
+    const cached = checkOfflineCache(offlineCache, cacheKey);
+    if (cached) {
+      logBridge('info', 'offline cache hit (stream)', { cacheKey });
+      callbacks.onFragment({
+        requestId: validatedRequest.requestId,
+        segmentId: seg.id,
+        text: cached.translatedText,
+        done: true,
+        isLast: true
+      });
+      callbacks.onDone(0);
+      return { ok: true };
+    }
+  }
+
   const timeoutMs = resolveBridgeRequestTimeoutMs(validatedRequest, TRANSLATE_TIMEOUT_MS);
   const startedAt = Date.now();
+
+  // Inject terminology
+  const termTable = await getTermTable();
+  const sourceLang = validatedRequest.sourceLang ?? 'auto';
+  const termsPrompt = injectTermsPrompt(termTable.terms, sourceLang, validatedRequest.targetLang);
+
+  let finalRequest = validatedRequest;
+  if (termsPrompt) {
+    finalRequest = {
+      ...validatedRequest,
+      segments: validatedRequest.segments.map((seg) => ({
+        ...seg,
+        text: termsPrompt + seg.text
+      }))
+    };
+  }
 
   logBridge('info', 'stream request start', {
     requestId: validatedRequest.requestId,
@@ -351,7 +446,8 @@ export async function translateWithBridgeStream(
     bridgeUrl: settings.bridgeUrl,
     timeoutMs,
     segmentCount: validatedRequest.segments.length,
-    charCount: validatedRequest.segments.reduce((sum, segment) => sum + segment.text.length, 0)
+    charCount: validatedRequest.segments.reduce((sum, segment) => sum + segment.text.length, 0),
+    hasTerms: termsPrompt.length > 0
   });
 
   let errorResult: TranslationError | undefined;
@@ -364,6 +460,24 @@ export async function translateWithBridgeStream(
     return { ok: false, error };
   };
 
+  const writeCacheForFragment = async (fragment: StreamFragment): Promise<void> => {
+    if (validatedRequest.mode === 'selection' && fragment.done) {
+      const seg = validatedRequest.segments[0];
+      if (seg && fragment.segmentId === seg.id) {
+        const cacheKey = await hashRequest(seg.text, validatedRequest.targetLang, validatedRequest.displayMode);
+        const entry: OfflineCacheEntry = {
+          sourceText: seg.text,
+          translatedText: fragment.text,
+          targetLang: validatedRequest.targetLang,
+          displayMode: validatedRequest.displayMode,
+          cachedAt: Date.now(),
+          expiresAt: Date.now() + CACHE_TTL_MS
+        };
+        void writeOfflineCache(cacheKey, entry);
+      }
+    }
+  };
+
   const doStream = async (): Promise<StreamCallResult> => {
     try {
       const response = await fetchImpl(`${settings.bridgeUrl}/translate/stream`, {
@@ -372,7 +486,7 @@ export async function translateWithBridgeStream(
           ...headersFromSettings(settings),
           'X-Request-Id': validatedRequest.requestId
         },
-        body: JSON.stringify(validatedRequest),
+        body: JSON.stringify(finalRequest),
         signal: withTimeout(timeoutMs)
       });
 
@@ -434,6 +548,9 @@ export async function translateWithBridgeStream(
           try {
             const fragment = JSON.parse(eventData) as StreamFragment;
             callbacks.onFragment(fragment);
+            if (fragment.done) {
+              void writeCacheForFragment(fragment);
+            }
           } catch (error) {
             logBridge('warn', 'stream fragment parse failed', {
               requestId: validatedRequest.requestId,
@@ -444,20 +561,20 @@ export async function translateWithBridgeStream(
           try {
             const err = JSON.parse(eventData) as TranslationError;
             emitError(createError(err.code, err.message, err.retryable, err.details));
-          } catch (error) {
+          } catch {
             logBridge('warn', 'stream error event parse failed', {
               requestId: validatedRequest.requestId,
-              error: error instanceof Error ? error.message : 'unknown'
+              eventData
             });
           }
         } else if (eventType === 'done') {
           try {
             const doneData = JSON.parse(eventData) as { durationMs: number };
             callbacks.onDone(doneData.durationMs);
-          } catch (error) {
+          } catch {
             logBridge('warn', 'stream done event parse failed', {
               requestId: validatedRequest.requestId,
-              error: error instanceof Error ? error.message : 'unknown'
+              eventData
             });
           }
         }
@@ -511,7 +628,7 @@ export async function translateWithBridgeStream(
           timeoutMs,
           durationMs: Date.now() - startedAt
         });
-        return emitError(createError('timeout', 'Bridge stream request timed out. Try again after VS Code finishes the translation.', true));
+        return emitError(createError('timeout', '翻译请求超时。请稍后重试。', true));
       }
       logBridge('error', 'stream request error', {
         requestId: validatedRequest.requestId,

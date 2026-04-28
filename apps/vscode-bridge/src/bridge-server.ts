@@ -113,6 +113,10 @@ export class BridgeHttpServer {
         return this.respondJson(response, 200, await this.controller.getHealth(), request.headers.origin, requestId, startedAt, route);
       }
 
+      if (request.method === 'GET' && request.url === '/health/ping') {
+        return this.handlePingRequest(request, response, requestId);
+      }
+
       if (request.method === 'POST' && request.url === '/session/pair') {
         if (request.headers.origin?.startsWith('chrome-extension://')) {
           throw new BridgeError('invalid_request', 'Pairing tokens must be copied from VS Code, not fetched by browser extensions.', 403);
@@ -194,6 +198,21 @@ export class BridgeHttpServer {
     sendEvent('done', { durationMs });
     response.end();
     this.logger.info(`[bridge] request=${requestId} route="POST /translate/stream" status=200 durationMs=${durationMs}`);
+  }
+
+  private async handlePingRequest(
+    _request: http.IncomingMessage,
+    response: http.ServerResponse,
+    requestId: string
+  ): Promise<void> {
+    const origin = _request.headers.origin;
+    response.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache',
+      'X-Request-Id': requestId,
+      ...(origin?.startsWith('chrome-extension://') ? { 'Access-Control-Allow-Origin': origin, 'Vary': 'Origin' } : {})
+    });
+    response.end(JSON.stringify({ pong: true, ts: Date.now() }));
   }
 
   private assertAllowedOrigin(request: http.IncomingMessage): void {

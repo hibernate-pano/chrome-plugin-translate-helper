@@ -14,42 +14,63 @@ const revertButton = document.getElementById('revert-page') as HTMLButtonElement
 const selectionButton = document.getElementById('translate-selection') as HTMLButtonElement;
 
 let popupUiState: PopupUiState = { lastPageMode: 'translated-only' };
+let isTranslating = false;
+let statusClearTimer: ReturnType<typeof setTimeout> | undefined;
 
-function setBusy(isBusy: boolean): void {
-  quickTranslateButton.disabled = isBusy;
-  translatedOnlyButton.disabled = isBusy;
-  bilingualButton.disabled = isBusy;
-  revertButton.disabled = isBusy;
-  selectionButton.disabled = isBusy;
+function setBusy(busy: boolean): void {
+  isTranslating = busy;
+  quickTranslateButton.disabled = busy;
+  translatedOnlyButton.disabled = busy;
+  bilingualButton.disabled = busy;
+  revertButton.disabled = busy;
+  selectionButton.disabled = busy;
+
+  if (busy) {
+    quickTranslateButton.dataset.originalText = quickTranslateButton.textContent ?? '';
+    quickTranslateButton.textContent = '翻译中…';
+  } else {
+    quickTranslateButton.textContent = quickTranslateButton.dataset.originalText ?? '翻译整页';
+  }
 }
 
 function renderStatus(message: string, tone: 'neutral' | 'success' | 'error' = 'neutral'): void {
+  if (statusClearTimer !== undefined) {
+    clearTimeout(statusClearTimer);
+    statusClearTimer = undefined;
+  }
   bridgeStatus.dataset.tone = tone;
   bridgeStatus.textContent = message;
+
+  if (tone === 'success' && message) {
+    statusClearTimer = setTimeout(() => {
+      if (bridgeStatus.dataset.tone === 'success') {
+        bridgeStatus.textContent = '';
+      }
+    }, 4000);
+  }
 }
 
 function describeMode(mode: DisplayMode): string {
-  return mode === 'bilingual' ? 'Bilingual' : 'Translated only';
+  return mode === 'bilingual' ? '双语' : '仅译文';
 }
 
 function renderQuickMode(): void {
-  quickTranslateButton.textContent = `Translate page now`;
-  quickModeHint.textContent = `Uses ${describeMode(popupUiState.lastPageMode).toLowerCase()} mode.`;
+  quickTranslateButton.textContent = '翻译整页';
+  quickModeHint.textContent = `模式：${describeMode(popupUiState.lastPageMode)}`;
 }
 
 function describeHealth(health: BridgeHealth): { tone: 'neutral' | 'success' | 'error'; message: string } {
   if (health.status === 'ready') {
-    const tokenHint = health.tokenHint ? ` Token ${health.tokenHint}.` : '';
-    return { tone: 'success', message: `Bridge ready. ${health.message}${tokenHint}` };
+    return { tone: 'success', message: '✓ 就绪' };
   }
   if (health.status === 'consent_required') {
-    return { tone: 'error', message: `Copilot consent required. ${health.message}` };
+    return { tone: 'error', message: '⚠ 需要授权 Copilot' };
   }
   if (health.status === 'copilot_unavailable') {
-    return { tone: 'error', message: `Copilot unavailable. ${health.message}` };
+    return { tone: 'error', message: '✗ Copilot 不可用' };
   }
   if (health.status === 'not_paired') {
-    return { tone: 'error', message: `Bridge not paired. ${health.message}` };
+    return { tone: 'error', message: '⚠ 未配对' };
   }
   return { tone: 'error', message: health.message };
 }
@@ -57,7 +78,7 @@ function describeHealth(health: BridgeHealth): { tone: 'neutral' | 'success' | '
 async function activeTabId(): Promise<number> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) {
-    throw new Error('No active tab found.');
+    throw new Error('无法获取当前标签页。');
   }
   return tab.id;
 }
@@ -78,9 +99,9 @@ async function runAction(message: RuntimeMessage, onSuccess?: () => Promise<void
     if (result.ok) {
       await onSuccess?.();
     }
-    renderStatus(result.message ?? 'Action finished.', result.ok ? 'success' : 'error');
+    renderStatus(result.message ?? '操作完成', result.ok ? 'success' : 'error');
   } catch (error) {
-    renderStatus(error instanceof Error ? error.message : 'Unexpected extension error.', 'error');
+    renderStatus(error instanceof Error ? error.message : '扩展发生意外错误。', 'error');
   } finally {
     setBusy(false);
   }
@@ -89,7 +110,7 @@ async function runAction(message: RuntimeMessage, onSuccess?: () => Promise<void
 async function refreshStatus(): Promise<void> {
   const [settings, rememberedUiState] = await Promise.all([getSettings(), getPopupUiState()]);
   popupUiState = rememberedUiState;
-  settingsSummary.textContent = `Target: ${settings.targetLanguage} · Quick mode: ${describeMode(popupUiState.lastPageMode)}`;
+  settingsSummary.textContent = `目标语言：${settings.targetLanguage} · 快捷模式：${describeMode(popupUiState.lastPageMode)}`;
   renderQuickMode();
 
   try {
@@ -106,13 +127,14 @@ async function refreshStatus(): Promise<void> {
       renderStatus(description.message, description.tone);
       return;
     }
-    renderStatus('Bridge health unavailable.', 'error');
+    renderStatus('无法获取桥接状态。', 'error');
   } catch (error) {
-    renderStatus(error instanceof Error ? error.message : 'Unable to reach the background worker.', 'error');
+    renderStatus(error instanceof Error ? error.message : '无法连接到后台服务。', 'error');
   }
 }
 
 async function runPageTranslation(displayMode: DisplayMode): Promise<void> {
+  if (isTranslating) return;
   const tabId = await activeTabId();
   await runAction({
     type: 'translate-page',
@@ -134,6 +156,7 @@ bilingualButton.addEventListener('click', async () => {
 });
 
 revertButton.addEventListener('click', async () => {
+  if (isTranslating) return;
   const tabId = await activeTabId();
   await runAction({
     type: 'revert-page',
@@ -142,6 +165,7 @@ revertButton.addEventListener('click', async () => {
 });
 
 selectionButton.addEventListener('click', async () => {
+  if (isTranslating) return;
   const tabId = await activeTabId();
   await runAction({
     type: 'translate-selection',

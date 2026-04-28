@@ -22,6 +22,14 @@ describe('options page', () => {
       <div id="translated-preview"></div>
       <span id="save-status"></span>
       <div id="bridge-check-status"></div>
+      <table><tbody id="term-table-body"></tbody></table>
+      <input id="term-source" />
+      <input id="term-target" />
+      <input id="term-lang" value="auto-zh-CN" />
+      <button id="add-term" type="button"></button>
+      <button id="export-terms" type="button"></button>
+      <button id="import-terms" type="button"></button>
+      <input id="import-terms-input" type="file" />
     `;
 
     const fetchBridgeHealth = vi.fn().mockResolvedValue({
@@ -44,7 +52,9 @@ describe('options page', () => {
         translatedFontFamily: 'Georgia, serif',
         translatedTextColor: '#275d84'
       }),
-      saveSettings: vi.fn()
+      saveSettings: vi.fn(),
+      getTermTable: vi.fn().mockResolvedValue({ version: 1, terms: [] }),
+      saveTermTable: vi.fn()
     }));
 
     await import('./options');

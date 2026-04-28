@@ -73,10 +73,10 @@ describe('selection ui', () => {
     await Promise.resolve();
 
     expect(writeText).toHaveBeenCalledWith('翻译结果');
-    expect(button.textContent).toBe('Copied');
+    expect(button.textContent).toBe('已复制 ✓');
 
     await vi.advanceTimersByTimeAsync(1200);
-    expect(button.textContent).toBe('Copy');
+    expect(button.textContent).toBe('复制');
     expect(button.disabled).toBe(false);
     vi.useRealTimers();
   });

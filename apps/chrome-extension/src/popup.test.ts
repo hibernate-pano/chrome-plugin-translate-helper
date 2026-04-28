@@ -88,6 +88,6 @@ describe('popup', () => {
       displayMode: 'bilingual'
     });
     expect(storageState.popupUiState).toEqual({ lastPageMode: 'bilingual' });
-    expect(document.getElementById('quick-mode-hint')?.textContent).toContain('bilingual mode');
+    expect(document.getElementById('quick-mode-hint')?.textContent).toContain('双语');
   });
 });

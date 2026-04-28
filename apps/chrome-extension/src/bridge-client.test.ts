@@ -1,5 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 
+// Mock chrome global before importing bridge-client
+Object.defineProperty(global, 'chrome', {
+  value: {
+    storage: {
+      local: {
+        get: vi.fn().mockResolvedValue({}),
+        set: vi.fn().mockResolvedValue(undefined)
+      }
+    }
+  },
+  writable: true
+});
+
 import { fetchBridgeHealth, translateWithBridge, translateWithBridgeStream } from './bridge-client';
 import { DEFAULT_SETTINGS } from './settings';
 

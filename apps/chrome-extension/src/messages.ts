@@ -46,6 +46,9 @@ export type RuntimeMessage =
       type: 'get-bridge-health';
     }
   | {
+      type: 'cancel-translation';
+    }
+  | {
       type: 'revert-page';
       tabId: number;
     }
@@ -79,6 +82,15 @@ export type RuntimeMessage =
     }
   | {
       type: 'prepare-page-stream';
+      displayMode: DisplayMode;
+      style: TranslatedTextStyle;
+      totalSegments: number;
+    }
+  | {
+      type: 'update-progress';
+      current: number;
+      total: number;
+      message?: string;
     }
   | {
       type: 'stream-fragment';
@@ -111,4 +123,18 @@ export type RuntimeMessage =
       message: string;
       code?: string;
       anchorRect?: ContentSelectionPayload['anchorRect'];
+    }
+  | {
+      type: 'stream-page-error';
+      requestId: string;
+      message: string;
+      code?: string;
+    }
+  | {
+      type: 'connection-lost';
+      message: string;
+    }
+  | {
+      type: 'connection-restored';
+      message: string;
     };

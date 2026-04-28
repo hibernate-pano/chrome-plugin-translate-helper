@@ -1,6 +1,6 @@
 import { collectPagePayload, collectSelectionPayload, currentPageVersion, invalidatePageCache } from './document-extractor';
 import { type RuntimeMessage } from './messages';
-import { applyPageTranslation, revertPageTranslation, applyFragment, registerPageBlocks } from './page-renderer';
+import { applyPageTranslation, revertPageTranslation, applyFragment, registerPageBlocks, showProgressBar } from './page-renderer';
 import { clearSelectionUI, registerSelectionRetry, showSelectionPopup, updateSelectionBubble } from './selection-ui';
 
 let lastRenderedVersion = currentPageVersion();
@@ -68,6 +68,14 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   }
 });
 
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    void chrome.runtime.sendMessage({
+      type: 'cancel-translation'
+    } satisfies RuntimeMessage);
+  }
+});
+
 chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResponse) => {
   if (!message || typeof message !== 'object' || !('type' in message)) {
     return false;
@@ -109,8 +117,21 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResp
 
   if (message.type === 'prepare-page-stream') {
     const { blocks } = collectPagePayload();
-    registerPageBlocks(blocks, { reset: true });
+    registerPageBlocks(blocks, {
+      reset: true,
+      displayMode: message.displayMode,
+      style: message.style
+    });
+    if (message.totalSegments > 1) {
+      showProgressBar(0, message.totalSegments, '开始翻译…');
+    }
     sendResponse({ ok: true, registeredCount: blocks.length });
+    return true;
+  }
+
+  if (message.type === 'update-progress') {
+    showProgressBar(message.current, message.total, message.message);
+    sendResponse({ ok: true });
     return true;
   }
 
@@ -172,6 +193,29 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResp
       anchorRect: message.anchorRect,
       message: message.message
     });
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (message.type === 'stream-page-error') {
+    showSelectionPopup({
+      state: 'error',
+      anchorRect: undefined,
+      message: message.message
+    });
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (message.type === 'connection-lost') {
+    showConnectionBanner(message.message, 'error');
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (message.type === 'connection-restored') {
+    dismissConnectionBanner();
+    showConnectionBanner(message.message, 'success');
     sendResponse({ ok: true });
     return true;
   }

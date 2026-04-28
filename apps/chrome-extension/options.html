@@ -1,15 +1,22 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Translate Helper Options</title>
+    <title>Translate Helper 设置</title>
     <style>
       :root {
-        color-scheme: light;
+        color-scheme: light dark;
         font-family: "Iowan Old Style", "Noto Serif SC", Georgia, serif;
         background: #f3ede3;
         color: #1f1b17;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          background: #1a1614;
+          color: #e8e0d5;
+        }
       }
 
       body {
@@ -20,20 +27,23 @@
           radial-gradient(circle at right top, rgba(64, 104, 131, 0.12), transparent 30%);
       }
 
+      @media (prefers-color-scheme: dark) {
+        body {
+          background:
+            linear-gradient(180deg, rgba(28, 24, 20, 0.6), rgba(26, 22, 20, 0.95)),
+            radial-gradient(circle at right top, rgba(64, 104, 131, 0.08), transparent 30%);
+        }
+      }
+
       main {
-        max-width: 760px;
+        max-width: 860px;
         margin: 0 auto;
-        padding: 48px 24px 64px;
+        padding: 48px 24px 80px;
       }
 
-      h1 {
-        margin: 0 0 8px;
-        font-size: 34px;
-      }
-
-      p {
-        margin: 0;
-      }
+      h1 { margin: 0 0 8px; font-size: 34px; }
+      h2 { margin: 32px 0 12px; font-size: 20px; border-bottom: 1px solid rgba(76,57,34,0.12); padding-bottom: 8px; }
+      p { margin: 0; }
 
       .lead {
         max-width: 580px;
@@ -41,13 +51,22 @@
         line-height: 1.6;
       }
 
-      form {
+      section {
         margin-top: 28px;
         padding: 24px;
         border-radius: 20px;
         background: rgba(255, 251, 245, 0.9);
         border: 1px solid rgba(76, 57, 34, 0.12);
         box-shadow: 0 18px 40px rgba(63, 44, 18, 0.08);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        section {
+          background: rgba(36, 30, 26, 0.85);
+          border-color: rgba(255,255,255,0.08);
+        }
+        h2 { border-color: rgba(255,255,255,0.1); }
+        .lead { color: #9a8a7a; }
       }
 
       .grid {
@@ -63,14 +82,21 @@
         font-size: 14px;
       }
 
-      input,
-      select {
+      input, select {
         border-radius: 12px;
         border: 1px solid #d8c7ae;
         background: #fffdfa;
         padding: 11px 12px;
         font: inherit;
         color: inherit;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        input, select {
+          border-color: rgba(255,255,255,0.12);
+          background: rgba(20,16,14,0.9);
+          color: #e8e0d5;
+        }
       }
 
       .actions {
@@ -92,37 +118,20 @@
         cursor: pointer;
       }
 
-      button.secondary {
-        background: #e7dac5;
-        color: #3d3227;
-      }
+      button.secondary { background: #e7dac5; color: #3d3227; }
+      @media (prefers-color-scheme: dark) { button.secondary { background: rgba(255,255,255,0.1); color: #e8e0d5; } }
 
-      #save-status {
-        color: #5b4e3d;
-        font-size: 14px;
-      }
+      button.small { padding: 6px 12px; font-size: 12px; border-radius: 8px; }
 
-      .inline-actions {
-        display: flex;
-        gap: 8px;
-      }
+      #save-status { color: #5b4e3d; font-size: 14px; }
+      @media (prefers-color-scheme: dark) { #save-status { color: #9a8a7a; } }
 
-      .inline-actions button {
-        padding: 9px 12px;
-      }
+      .inline-actions { display: flex; gap: 8px; }
+      .inline-actions button { padding: 9px 12px; }
 
-      .status {
-        min-height: 20px;
-        font-size: 13px;
-      }
-
-      .status[data-tone="success"] {
-        color: #1f6a40;
-      }
-
-      .status[data-tone="error"] {
-        color: #8a2d2d;
-      }
+      .status { min-height: 20px; font-size: 13px; }
+      .status[data-tone="success"] { color: #1f6a40; }
+      .status[data-tone="error"] { color: #8a2d2d; }
 
       .preview {
         margin-top: 24px;
@@ -132,64 +141,151 @@
         border: 1px dashed rgba(76, 57, 34, 0.18);
       }
 
-      .preview-label {
-        margin-bottom: 10px;
-        font-size: 13px;
+      @media (prefers-color-scheme: dark) {
+        .preview { background: rgba(20,16,14,0.8); border-color: rgba(255,255,255,0.08); }
+      }
+
+      .preview-label { margin-bottom: 10px; font-size: 13px; color: #6a5944; }
+
+      /* Terminology table */
+      .term-table-wrap { overflow-x: auto; margin-top: 12px; }
+      .term-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      .term-table th {
+        text-align: left;
+        padding: 8px 8px;
         color: #6a5944;
+        font-size: 12px;
+        font-weight: 600;
+        border-bottom: 2px solid rgba(76,57,34,0.12);
+      }
+      .term-table td { vertical-align: middle; }
+
+      .term-add-form {
+        display: grid;
+        grid-template-columns: 1fr 1fr auto auto;
+        gap: 10px;
+        align-items: end;
+        margin-top: 16px;
+        padding: 14px;
+        border-radius: 12px;
+        background: rgba(0,0,0,0.03);
+        border: 1px solid rgba(76,57,34,0.08);
+      }
+      @media (prefers-color-scheme: dark) {
+        .term-add-form { background: rgba(255,255,255,0.03); border-color: rgba(255,255,255,0.06); }
+      }
+
+      .io-actions { display: flex; gap: 8px; margin-top: 12px; }
+
+      .term-hint {
+        font-size: 12px;
+        color: #8a7a6a;
+        margin: 8px 0 0;
+        line-height: 1.5;
       }
     </style>
   </head>
   <body>
     <main>
-      <h1>Translate Helper Options</h1>
-      <p class="lead">
-        Configure the local bridge address, pairing token, target language, and how translated text should appear on document-style pages.
-      </p>
+      <h1>Translate Helper 设置</h1>
+      <p class="lead">配置本地桥接地址、配对 Token、目标语言，以及翻译文本在文档类页面上的显示样式。</p>
 
-      <form id="options-form">
-        <div class="grid">
-          <label>
-            Bridge URL
-            <input id="bridge-url" name="bridgeUrl" type="url" placeholder="http://127.0.0.1:43189" />
-          </label>
-          <label>
-            Pairing token
-            <input id="pairing-token" name="pairingToken" type="password" placeholder="Paste token from VS Code bridge" />
-            <div class="inline-actions">
-              <button id="toggle-token-visibility" type="button" class="secondary">Show token</button>
-            </div>
-          </label>
-          <label>
-            Target language
-            <input id="target-language" name="targetLanguage" type="text" placeholder="zh-CN" />
-          </label>
-          <label>
-            Font family
-            <select id="translated-font-family" name="translatedFontFamily">
-              <option value="Georgia, &quot;Noto Serif SC&quot;, serif">Serif reading</option>
-              <option value="&quot;PingFang SC&quot;, &quot;Microsoft YaHei&quot;, sans-serif">Chinese UI sans</option>
-              <option value="&quot;SF Pro Text&quot;, &quot;PingFang SC&quot;, sans-serif">System sans</option>
-              <option value="&quot;IBM Plex Sans&quot;, &quot;PingFang SC&quot;, sans-serif">IBM Plex Sans</option>
-            </select>
-          </label>
-          <label>
-            Translated text color
-            <input id="translated-text-color" name="translatedTextColor" type="color" />
-          </label>
+      <section>
+        <h2>基础设置</h2>
+        <form id="options-form">
+          <div class="grid">
+            <label>
+              Bridge URL
+              <input id="bridge-url" name="bridgeUrl" type="url" placeholder="http://127.0.0.1:43189" />
+            </label>
+            <label>
+              配对 Token
+              <input id="pairing-token" name="pairingToken" type="password" placeholder="从 VS Code 桥接复制" />
+              <div class="inline-actions">
+                <button id="toggle-token-visibility" type="button" class="secondary">显示 token</button>
+              </div>
+            </label>
+            <label>
+              目标语言
+              <input id="target-language" name="targetLanguage" type="text" placeholder="zh-CN" />
+            </label>
+            <label>
+              字体
+              <select id="translated-font-family" name="translatedFontFamily">
+                <option value="Georgia, &quot;Noto Serif SC&quot;, serif">衬线体（阅读）</option>
+                <option value="&quot;PingFang SC&quot;, &quot;Microsoft YaHei&quot;, sans-serif">中文无衬线</option>
+                <option value="&quot;SF Pro Text&quot;, &quot;PingFang SC&quot;, sans-serif">系统无衬线</option>
+                <option value="&quot;IBM Plex Sans&quot;, &quot;PingFang SC&quot;, sans-serif">IBM Plex Sans</option>
+              </select>
+            </label>
+            <label>
+              翻译文字颜色
+              <input id="translated-text-color" name="translatedTextColor" type="color" />
+            </label>
+          </div>
+
+          <div class="actions">
+            <button type="submit">保存设置</button>
+            <button id="test-bridge" type="button" class="secondary">测试桥接</button>
+            <span id="save-status">暂无未保存的更改。</span>
+          </div>
+          <div id="bridge-check-status" class="status" data-tone="neutral"></div>
+
+          <div class="preview">
+            <div class="preview-label">翻译文字预览</div>
+            <div id="translated-preview">这是用于文档阅读的翻译样式预览。</div>
+          </div>
+        </form>
+      </section>
+
+      <section>
+        <h2>术语表</h2>
+        <p class="lead" style="font-size:14px; margin-bottom: 4px;">
+          定义强制翻译规则。同一个术语在不同地方始终翻译成指定译文。
+        </p>
+        <p class="term-hint">
+          例如：添加 <code>sprint</code> → <code>冲刺</code>，所有包含 sprint 的段落都会使用此译文。<br>
+          格式：<code>auto-zh-CN</code> 表示源语言自动检测、目标中文。
+        </p>
+
+        <div class="term-table-wrap">
+          <table class="term-table">
+            <thead>
+              <tr>
+                <th>原文</th>
+                <th>译文</th>
+                <th>语言方向</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="term-table-body">
+              <tr><td colspan="4" style="padding:12px;text-align:center;color:#888;font-size:13px;">加载中…</td></tr>
+            </tbody>
+          </table>
         </div>
 
-        <div class="actions">
-          <button type="submit">Save settings</button>
-          <button id="test-bridge" type="button" class="secondary">Test bridge</button>
-          <span id="save-status">No unsaved changes.</span>
+        <div class="term-add-form">
+          <label style="font-size:13px;">
+            原文
+            <input id="term-source" type="text" placeholder="sprint review meeting" />
+          </label>
+          <label style="font-size:13px;">
+            译文
+            <input id="term-target" type="text" placeholder="冲刺评审会议" />
+          </label>
+          <label style="font-size:13px;">
+            语言方向
+            <input id="term-lang" type="text" placeholder="auto-zh-CN" value="auto-zh-CN" />
+          </label>
+          <button id="add-term" type="button">添加 / 更新</button>
         </div>
-        <div id="bridge-check-status" class="status" data-tone="neutral"></div>
 
-        <div class="preview">
-          <div class="preview-label">Translated text preview</div>
-          <div id="translated-preview">这是用于文档阅读的翻译样式预览。</div>
+        <div class="io-actions">
+          <button id="export-terms" type="button" class="secondary small">导出 JSON</button>
+          <button id="import-terms" type="button" class="secondary small">导入 JSON</button>
+          <input id="import-terms-input" type="file" accept=".json" style="display:none" />
         </div>
-      </form>
+      </section>
     </main>
 
     <script type="module" src="./options.js"></script>
